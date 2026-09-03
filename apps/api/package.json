@@ -5,13 +5,13 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc -p tsconfig.json && prisma generate",
+    "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
     "seed": "ts-node --transpile-only prisma/seed.ts",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --forceExit",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {

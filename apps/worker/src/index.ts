@@ -1,3 +1,4 @@
+import http from 'http';
 import { Worker } from 'bullmq';
 import { createRedisConnection } from './redis';
 import { processBuildJob } from './processors/buildProcessor';
@@ -39,7 +40,21 @@ for (const [name, worker] of [
 // eslint-disable-next-line no-console
 console.log('Eon Rover worker started, listening for build/research/shipyard/fleet events.');
 
+// Minimal HTTP endpoint so Docker (and other orchestrators) can healthcheck the worker process.
+const healthPort = Number(process.env.WORKER_HEALTH_PORT || 4100);
+const healthServer = http.createServer((req, res) => {
+  if (req.url === '/healthz') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
+healthServer.listen(healthPort);
+
 async function shutdown() {
+  healthServer.close();
   await Promise.all([buildWorker.close(), researchWorker.close(), shipyardWorker.close(), fleetWorker.close()]);
   process.exit(0);
 }
