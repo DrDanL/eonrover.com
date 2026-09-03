@@ -4,6 +4,8 @@ const transport = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'localhost',
   port: Number(process.env.SMTP_PORT || 1025),
   secure: false,
+  disableFileAccess: true,
+  disableUrlAccess: true,
 });
 
 export async function sendMail(to: string, subject: string, html: string): Promise<void> {
@@ -12,6 +14,8 @@ export async function sendMail(to: string, subject: string, html: string): Promi
     to,
     subject,
     html,
+    disableFileAccess: true,
+    disableUrlAccess: true,
   });
 }
 
