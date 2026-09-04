@@ -1,0 +1,408 @@
+// Eon Rover — Prisma schema
+// PostgreSQL datasource with all persistent game state.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountRole {
+  PLAYER
+  MODERATOR
+  ADMIN
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+model User {
+  id                String        @id @default(uuid())
+  email             String        @unique
+  username          String        @unique
+  passwordHash      String
+  role              AccountRole   @default(PLAYER)
+  status            AccountStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt   DateTime?
+  protectedUntil    DateTime?
+  lastLoginAt       DateTime?
+  lastActiveAt      DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  planets           Planet[]
+  sessions          Session[]
+  verificationTokens VerificationToken[]
+  sentMessages      Message[]        @relation("SentMessages")
+  receivedMessages  Message[]        @relation("ReceivedMessages")
+  notifications     Notification[]
+  allianceMembership AllianceMember?
+  auditLogs         AuditLog[]
+  securityEvents    SecurityEvent[]
+  gateFragments     GateFragment[]
+
+  @@index([status])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  userAgent String?
+  ipAddress String?
+
+  @@index([userId])
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+model VerificationToken {
+  id        String                @id @default(uuid())
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String                @unique
+  type      VerificationTokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  @@index([userId, type])
+}
+
+enum PlanetType {
+  TEMPERATE
+  VOLCANIC
+  ICE
+  GAS_GIANT
+  BARREN
+  OCEANIC
+}
+
+model Planet {
+  id               String   @id @default(uuid())
+  ownerId          String
+  owner            User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name             String
+  isHomeworld      Boolean  @default(false)
+  galaxy           Int
+  system           Int
+  slot             Int
+  planetType       PlanetType
+  temperature      Int
+  solarIndex       Float
+
+  alloy            Float    @default(0)
+  heliox           Float    @default(0)
+  aether           Float    @default(0)
+  lastProductionAt DateTime @default(now())
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  buildings        Building[]
+  buildQueue       BuildQueueItem[]
+  researchQueue    ResearchQueueItem[]
+  ships            Ship[]
+  shipyardQueue    ShipyardQueueItem[]
+  defences         Defence[]
+  fleetsOrigin     FleetMission[] @relation("OriginPlanet")
+  fleetsTarget     FleetMission[] @relation("TargetPlanet")
+  debrisField      DebrisField?
+  gateFragments    GateFragment[]
+  gate             EonGate?
+
+  @@unique([galaxy, system, slot])
+  @@index([ownerId])
+}
+
+model Building {
+  id       String @id @default(uuid())
+  planetId String
+  planet   Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  key      String
+  level    Int    @default(0)
+
+  @@unique([planetId, key])
+}
+
+enum QueueStatus {
+  PENDING
+  COMPLETE
+  CANCELLED
+}
+
+model BuildQueueItem {
+  id          String      @id @default(uuid())
+  planetId    String
+  planet      Planet      @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  buildingKey String
+  targetLevel Int
+  startedAt   DateTime    @default(now())
+  completesAt DateTime
+  status      QueueStatus @default(PENDING)
+  jobId       String?
+
+  @@index([planetId, status])
+}
+
+model Research {
+  id     String @id @default(uuid())
+  userId String
+  key    String
+  level  Int    @default(0)
+
+  @@unique([userId, key])
+}
+
+model ResearchQueueItem {
+  id          String      @id @default(uuid())
+  planetId    String
+  planet      Planet      @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  researchKey String
+  targetLevel Int
+  startedAt   DateTime    @default(now())
+  completesAt DateTime
+  status      QueueStatus @default(PENDING)
+  jobId       String?
+
+  @@index([planetId, status])
+}
+
+model Ship {
+  id       String @id @default(uuid())
+  planetId String
+  planet   Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  key      String
+  count    Int    @default(0)
+
+  @@unique([planetId, key])
+}
+
+model ShipyardQueueItem {
+  id          String      @id @default(uuid())
+  planetId    String
+  planet      Planet      @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  itemKey     String
+  itemType    String // 'ship' | 'defence'
+  quantity    Int
+  remaining   Int
+  startedAt   DateTime    @default(now())
+  completesAt DateTime
+  status      QueueStatus @default(PENDING)
+  jobId       String?
+
+  @@index([planetId, status])
+}
+
+model Defence {
+  id       String @id @default(uuid())
+  planetId String
+  planet   Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  key      String
+  count    Int    @default(0)
+
+  @@unique([planetId, key])
+}
+
+enum MissionType {
+  TRANSPORT
+  DEPLOY
+  ESPIONAGE
+  ATTACK
+  RAID
+  RECYCLE
+  COLONIZE
+  EXPLORE
+  RETURN
+  GATE_TRAVEL
+}
+
+enum MissionStatus {
+  OUTBOUND
+  RETURNING
+  COMPLETE
+  RECALLED
+}
+
+model FleetMission {
+  id             String        @id @default(uuid())
+  originId       String
+  origin         Planet        @relation("OriginPlanet", fields: [originId], references: [id], onDelete: Cascade)
+  targetId       String?
+  target         Planet?       @relation("TargetPlanet", fields: [targetId], references: [id])
+  targetGalaxy   Int
+  targetSystem   Int
+  targetSlot     Int
+  missionType    MissionType
+  ships          Json
+  cargo          Json
+  speedPercent   Int           @default(100)
+  departedAt     DateTime      @default(now())
+  arrivesAt      DateTime
+  returnsAt      DateTime?
+  status         MissionStatus @default(OUTBOUND)
+  jobId          String?
+  resultSummary  Json?
+
+  @@index([originId])
+  @@index([status])
+}
+
+model CombatReport {
+  id           String   @id @default(uuid())
+  missionId    String
+  attackerId   String
+  defenderId   String?
+  planetId     String
+  createdAt    DateTime @default(now())
+  outcome      String
+  rounds       Json
+  debris       Json
+
+  @@index([attackerId])
+  @@index([defenderId])
+}
+
+model EspionageReport {
+  id         String   @id @default(uuid())
+  missionId  String
+  ownerId    String
+  targetPlanetId String
+  createdAt  DateTime @default(now())
+  accuracy   Float
+  data       Json
+
+  @@index([ownerId])
+}
+
+model DebrisField {
+  id       String @id @default(uuid())
+  planetId String @unique
+  planet   Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  alloy    Float  @default(0)
+  heliox   Float  @default(0)
+}
+
+model GateFragment {
+  id        String   @id @default(uuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  planetId  String
+  planet    Planet   @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  fragmentKey String
+  discoveredAt DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+model EonGate {
+  id          String   @id @default(uuid())
+  planetId    String   @unique
+  planet      Planet   @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  activatedAt DateTime @default(now())
+  linkedGateId String? @unique
+  isVisible   Boolean  @default(false)
+}
+
+model Alliance {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  tag         String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  members     AllianceMember[]
+}
+
+enum AllianceRank {
+  LEADER
+  OFFICER
+  MEMBER
+}
+
+model AllianceMember {
+  id         String       @id @default(uuid())
+  allianceId String
+  alliance   Alliance     @relation(fields: [allianceId], references: [id], onDelete: Cascade)
+  userId     String       @unique
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank       AllianceRank @default(MEMBER)
+  joinedAt   DateTime     @default(now())
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  senderId   String
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipientId String
+  recipient  User     @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+  subject    String
+  body       String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([recipientId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  message   String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Announcement {
+  id        String   @id @default(uuid())
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+  authorId  String?
+}
+
+model UniverseSetting {
+  id    String @id @default("singleton")
+  key   String @unique
+  value Json
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+}
+
+model SecurityEvent {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type      String
+  ipAddress String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+}

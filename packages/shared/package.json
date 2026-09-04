@@ -1,0 +1,17 @@
+{
+  "name": "@eonrover/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "pretest": "tsc -p tsconfig.json",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "echo \"(shared) no lint configured\""
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.10"
+  }
+}
