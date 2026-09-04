@@ -1,9 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
-import { hasTestDatabase } from '../testSetup';
-
-const describeIfDb = hasTestDatabase ? describe : describe.skip;
 const app = createApp();
 
 async function createLoggedInPlayer(email: string, username: string) {
@@ -25,7 +22,7 @@ async function createLoggedInPlayer(email: string, username: string) {
   return { cookie, planet };
 }
 
-describeIfDb('buildings queue', () => {
+describe('buildings queue', () => {
   it('enqueues an affordable building upgrade and deducts resources', async () => {
     const { cookie, planet } = await createLoggedInPlayer('builder@example.com', 'builder1');
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { asyncHandler } from '../middleware/error';
 
 const router = Router();
 
@@ -28,9 +29,9 @@ async function computeLeaderboard(limit: number) {
   return ranked;
 }
 
-router.get('/', requireAuth, async (_req, res) => {
+router.get('/', requireAuth, asyncHandler(async (_req, res) => {
   res.json({ leaderboard: await computeLeaderboard(100) });
-});
+}));
 
 export async function publicLeaderboardPreview(limit = 10) {
   return computeLeaderboard(limit);

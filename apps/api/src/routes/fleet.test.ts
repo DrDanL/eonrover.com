@@ -1,9 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
-import { hasTestDatabase } from '../testSetup';
-
-const describeIfDb = hasTestDatabase ? describe : describe.skip;
 const app = createApp();
 
 async function createLoggedInPlayer(email: string, username: string) {
@@ -25,7 +22,7 @@ async function createLoggedInPlayer(email: string, username: string) {
   return { cookie, user, planet };
 }
 
-describeIfDb('fleet missions', () => {
+describe('fleet missions', () => {
   it('rejects sending a fleet with no ships owned at the origin', async () => {
     const { cookie, planet } = await createLoggedInPlayer('empty@example.com', 'emptyfleet');
 

@@ -1,7 +1,10 @@
 import bcrypt from 'bcryptjs';
 import { Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
+import { getApiConfig } from '../config';
 import { prisma } from './prisma';
+
+const config = getApiConfig();
 
 export const SESSION_COOKIE = 'eonrover_sid';
 export const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
@@ -15,7 +18,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export function isSecureCookies(): boolean {
-  return process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE !== 'false';
+  return config.secureCookies;
 }
 
 export async function createSession(userId: string, req: Request, res: Response): Promise<void> {

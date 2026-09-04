@@ -1,9 +1,6 @@
 import { Job } from 'bullmq';
 import { prisma } from '../prisma';
-import { hasTestDatabase } from '../testSetup';
 import { processFleetJob } from './fleetProcessor';
-
-const describeIfDb = hasTestDatabase ? describe : describe.skip;
 
 async function createUser(email: string, username: string) {
   return prisma.user.create({
@@ -39,7 +36,7 @@ function fakeJob(missionId: string, name: string): Job<{ missionId: string }> {
   return { data: { missionId }, name } as Job<{ missionId: string }>;
 }
 
-describeIfDb('fleetProcessor', () => {
+describe('fleetProcessor', () => {
   it('TRANSPORT delivers cargo to the target planet and schedules the return leg', async () => {
     const attacker = await createUser('transporter@example.com', 'transporter');
     const defender = await createUser('receiver@example.com', 'receiver');

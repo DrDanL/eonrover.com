@@ -1,16 +1,20 @@
 import nodemailer from 'nodemailer';
+import { getApiConfig } from '../config';
+
+const config = getApiConfig();
 
 const transport = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'localhost',
-  port: Number(process.env.SMTP_PORT || 1025),
+  host: config.smtp.host,
+  port: config.smtp.port,
   secure: false,
+  requireTLS: config.smtp.requireTls,
   disableFileAccess: true,
   disableUrlAccess: true,
 });
 
 export async function sendMail(to: string, subject: string, html: string): Promise<void> {
   await transport.sendMail({
-    from: process.env.MAIL_FROM || 'no-reply@eonrover.com',
+    from: config.smtp.from,
     to,
     subject,
     html,

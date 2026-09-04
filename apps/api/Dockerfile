@@ -26,4 +26,4 @@ COPY --from=build /repo/packages/shared ./packages/shared
 COPY --from=build /repo/apps/api ./apps/api
 WORKDIR /repo/apps/api
 EXPOSE 4000
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run seed && node dist/server.js"]
+CMD ["sh", "-c", "node dist/config.js && npx prisma migrate deploy && npm run seed && node dist/server.js"]

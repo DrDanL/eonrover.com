@@ -1,3 +1,8 @@
 import { PrismaClient } from '@prisma/client';
+import { getWorkerConfig } from './config';
 
-export const prisma = new PrismaClient();
+const config = getWorkerConfig();
+
+export const prisma = new PrismaClient({
+  datasources: { db: { url: config.databaseUrl } },
+});

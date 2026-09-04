@@ -9,7 +9,11 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "node --test test/databaseSafety.test.cjs && npm run test --workspace @eonrover/shared && npm run test:config --workspace @eonrover/api && npm run test:config --workspace @eonrover/worker",
+    "test:integration": "npm run test:integration:api && npm run test:integration:worker",
+    "test:integration:api": "npm run test --workspace @eonrover/api",
+    "test:integration:worker": "npm run test --workspace @eonrover/worker",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": {

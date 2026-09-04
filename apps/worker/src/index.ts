@@ -1,11 +1,15 @@
 import http from 'http';
-import { Worker } from 'bullmq';
-import { createRedisConnection } from './redis';
-import { processBuildJob } from './processors/buildProcessor';
-import { processResearchJob } from './processors/researchProcessor';
-import { processShipyardJob } from './processors/shipyardProcessor';
-import { processFleetJob } from './processors/fleetProcessor';
+import { getWorkerConfig } from './config';
 
+const config = getWorkerConfig();
+const { Worker } = require('bullmq') as typeof import('bullmq');
+const { createRedisConnection } = require('./redis') as typeof import('./redis');
+const { prisma } = require('./prisma') as typeof import('./prisma');
+const { createHealthHandler } = require('./health') as typeof import('./health');
+const { processBuildJob } = require('./processors/buildProcessor') as typeof import('./processors/buildProcessor');
+const { processResearchJob } = require('./processors/researchProcessor') as typeof import('./processors/researchProcessor');
+const { processShipyardJob } = require('./processors/shipyardProcessor') as typeof import('./processors/shipyardProcessor');
+const { processFleetJob } = require('./processors/fleetProcessor') as typeof import('./processors/fleetProcessor');
 const connection = createRedisConnection();
 
 function logCompletion(name: string) {
@@ -40,18 +44,15 @@ for (const [name, worker] of [
 // eslint-disable-next-line no-console
 console.log('Eon Rover worker started, listening for build/research/shipyard/fleet events.');
 
-// Minimal HTTP endpoint so Docker (and other orchestrators) can healthcheck the worker process.
-const healthPort = Number(process.env.WORKER_HEALTH_PORT || 4100);
-const healthServer = http.createServer((req, res) => {
-  if (req.url === '/healthz') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok' }));
-    return;
-  }
-  res.writeHead(404);
-  res.end();
-});
-healthServer.listen(healthPort);
+const healthServer = http.createServer(createHealthHandler({
+  database: async () => {
+    await prisma.$queryRaw`SELECT 1`;
+  },
+  redis: async () => {
+    await connection.ping();
+  },
+}));
+healthServer.listen(config.healthPort);
 
 async function shutdown() {
   healthServer.close();

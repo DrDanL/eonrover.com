@@ -7,6 +7,7 @@ import { syncPlanetResources } from '../services/planetService';
 import { getBuildingLevels, getResearchLevels, requirementsMet } from '../services/requirements';
 import { researchQueue } from '../lib/redis';
 import { getUniverseConfig } from '../services/gameConfig';
+import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
@@ -17,7 +18,7 @@ async function assertOwnedPlanet(planetId: string, userId: string) {
   return planet;
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const levels = await getResearchLevels(req.user!.id);
   const catalog = Object.values(RESEARCH).map((def) => ({
     ...def,
@@ -28,19 +29,23 @@ router.get('/', async (req, res) => {
     where: { planet: { ownerId: req.user!.id }, status: 'PENDING' },
   });
   res.json({ catalog, queue: pending });
-});
+}));
 
 const enqueueSchema = z.object({ key: z.string(), planetId: z.string() });
 
-router.post('/', async (req, res) => {
+router.post('/', asyncHandler(async (req, res) => {
   const parsed = enqueueSchema.safeParse(req.body);
-  if (!parsed.success || !(parsed.data.key in RESEARCH)) {
-    res.status(400).json({ error: 'Unknown research' });
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error);
+    return;
+  }
+  if (!(parsed.data.key in RESEARCH)) {
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Unknown research');
     return;
   }
   const planet = await assertOwnedPlanet(parsed.data.planetId, req.user!.id);
   if (!planet) {
-    res.status(404).json({ error: 'Planet not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
   const key = parsed.data.key as ResearchKey;
@@ -49,7 +54,7 @@ router.post('/', async (req, res) => {
     where: { planet: { ownerId: req.user!.id }, status: 'PENDING' },
   });
   if (alreadyQueued) {
-    res.status(409).json({ error: 'Only one research can be active at a time' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Only one research can be active at a time');
     return;
   }
 
@@ -59,7 +64,7 @@ router.post('/', async (req, res) => {
   ]);
   const def = RESEARCH[key];
   if (!requirementsMet(def.requires, buildingLevels, researchLevels)) {
-    res.status(409).json({ error: 'Requirements not met' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requirements not met');
     return;
   }
   const targetLevel = (researchLevels[key] ?? 0) + 1;
@@ -67,7 +72,7 @@ router.post('/', async (req, res) => {
 
   const { planet: fresh } = await syncPlanetResources(planet.id);
   if (fresh.alloy < cost.alloy || fresh.heliox < cost.heliox || fresh.aether < cost.aether) {
-    res.status(402).json({ error: 'Insufficient resources', cost });
+    sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources', { cost });
     return;
   }
 
@@ -94,6 +99,6 @@ router.post('/', async (req, res) => {
   await prisma.researchQueueItem.update({ where: { id: result.id }, data: { jobId: job.id } });
 
   res.status(201).json({ queueItem: { ...result, jobId: job.id } });
-});
+}));
 
 export default router;

@@ -1,15 +1,16 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { asyncHandler, ERROR_CODES, sendError } from '../middleware/error';
 
 const router = Router();
 router.use(requireAuth);
 
-router.get('/:galaxy/:system', async (req, res) => {
+router.get('/:galaxy/:system', asyncHandler(async (req, res) => {
   const galaxy = Number(req.params.galaxy);
   const system = Number(req.params.system);
   if (!Number.isInteger(galaxy) || !Number.isInteger(system) || galaxy < 1 || system < 1) {
-    res.status(400).json({ error: 'Invalid coordinates' });
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Invalid coordinates');
     return;
   }
   const planets = await prisma.planet.findMany({
@@ -32,6 +33,6 @@ router.get('/:galaxy/:system', async (req, res) => {
     };
   });
   res.json({ galaxy, system, slots });
-});
+}));
 
 export default router;

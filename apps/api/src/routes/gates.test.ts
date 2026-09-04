@@ -1,9 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
-import { hasTestDatabase } from '../testSetup';
-
-const describeIfDb = hasTestDatabase ? describe : describe.skip;
 const app = createApp();
 
 async function createLoggedInPlayer(email: string, username: string) {
@@ -31,7 +28,7 @@ async function grantFragments(userId: string, planetId: string, count: number) {
   });
 }
 
-describeIfDb('Eon Gates', () => {
+describe('Eon Gates', () => {
   it('rejects activation without enough gate fragments', async () => {
     const { cookie, planet } = await createLoggedInPlayer('nogate@example.com', 'nogate');
     await prisma.building.create({ data: { planetId: planet.id, key: 'gateObservatory', level: 1 } });

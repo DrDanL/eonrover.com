@@ -1,9 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
-import { hasTestDatabase } from '../testSetup';
-
-const describeIfDb = hasTestDatabase ? describe : describe.skip;
 const app = createApp();
 
 async function registerAndVerify(email: string, username: string, password = 'Password123') {
@@ -20,7 +17,7 @@ async function registerAndVerify(email: string, username: string, password = 'Pa
     .expect(200);
 }
 
-describeIfDb('auth flow', () => {
+describe('auth flow', () => {
   it('registers, verifies, logs in and returns the current user', async () => {
     await registerAndVerify('pilot@example.com', 'pilot1');
 

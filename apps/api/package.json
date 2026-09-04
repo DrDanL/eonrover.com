@@ -12,6 +12,7 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "seed": "ts-node --transpile-only prisma/seed.ts",
     "test": "jest --runInBand --forceExit",
+    "test:config": "jest --config jest.unit.config.js --runInBand",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {

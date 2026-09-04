@@ -3,37 +3,38 @@ import { z } from 'zod';
 import { GATE_ACTIVATION_FRAGMENTS, GATE_ACTIVATION_REQUIREMENTS } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 
 const router = Router();
 router.use(requireAuth);
 
 // List the current player's Gate Fragments and any Eon Gates on their planets.
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const [fragments, gates] = await Promise.all([
     prisma.gateFragment.findMany({ where: { ownerId: req.user!.id }, orderBy: { discoveredAt: 'asc' } }),
     prisma.eonGate.findMany({ where: { planet: { ownerId: req.user!.id } } }),
   ]);
   res.json({ fragments, gates, fragmentsRequired: GATE_ACTIVATION_FRAGMENTS });
-});
+}));
 
 const activateSchema = z.object({ planetId: z.string() });
 
 // Consume GATE_ACTIVATION_FRAGMENTS fragments to activate an Eon Gate on one
 // of the player's own planets, requiring the Gate Observatory building and
 // Gate Theory research to have been unlocked first.
-router.post('/activate', async (req, res) => {
+router.post('/activate', asyncHandler(async (req, res) => {
   const parsed = activateSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+    sendValidationError(res, parsed.error);
     return;
   }
   const planet = await prisma.planet.findUnique({ where: { id: parsed.data.planetId }, include: { gate: true } });
   if (!planet || planet.ownerId !== req.user!.id) {
-    res.status(404).json({ error: 'Planet not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
   if (planet.gate) {
-    res.status(409).json({ error: 'This planet already has an Eon Gate' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'This planet already has an Eon Gate');
     return;
   }
 
@@ -42,11 +43,11 @@ router.post('/activate', async (req, res) => {
     prisma.research.findUnique({ where: { userId_key: { userId: req.user!.id, key: 'gateTheory' } } }),
   ]);
   if ((observatory?.level ?? 0) < GATE_ACTIVATION_REQUIREMENTS.gateObservatory) {
-    res.status(409).json({ error: 'Requires a Gate Observatory' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requires a Gate Observatory');
     return;
   }
   if ((gateTheory?.level ?? 0) < GATE_ACTIVATION_REQUIREMENTS.gateTheory) {
-    res.status(409).json({ error: 'Requires Gate Theory research' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requires Gate Theory research');
     return;
   }
 
@@ -56,7 +57,13 @@ router.post('/activate', async (req, res) => {
     take: GATE_ACTIVATION_FRAGMENTS,
   });
   if (fragments.length < GATE_ACTIVATION_FRAGMENTS) {
-    res.status(402).json({ error: `Requires ${GATE_ACTIVATION_FRAGMENTS} Gate Fragments`, have: fragments.length });
+    sendError(
+      res,
+      402,
+      ERROR_CODES.INSUFFICIENT_RESOURCES,
+      `Requires ${GATE_ACTIVATION_FRAGMENTS} Gate Fragments`,
+      { have: fragments.length },
+    );
     return;
   }
 
@@ -66,21 +73,21 @@ router.post('/activate', async (req, res) => {
   });
 
   res.status(201).json({ gate });
-});
+}));
 
 const linkSchema = z.object({ planetId: z.string(), targetPlanetId: z.string() });
 
 // Link two of the player's own activated gates so fleets can jump between
 // them. Linking is symmetric and replaces any existing link on either side.
-router.post('/link', async (req, res) => {
+router.post('/link', asyncHandler(async (req, res) => {
   const parsed = linkSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+    sendValidationError(res, parsed.error);
     return;
   }
   const { planetId, targetPlanetId } = parsed.data;
   if (planetId === targetPlanetId) {
-    res.status(400).json({ error: 'Cannot link a gate to itself' });
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Cannot link a gate to itself');
     return;
   }
   const [origin, target] = await Promise.all([
@@ -88,11 +95,11 @@ router.post('/link', async (req, res) => {
     prisma.planet.findUnique({ where: { id: targetPlanetId }, include: { gate: true } }),
   ]);
   if (!origin || origin.ownerId !== req.user!.id || !origin.gate) {
-    res.status(404).json({ error: 'Origin gate not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Origin gate not found');
     return;
   }
   if (!target || target.ownerId !== req.user!.id || !target.gate) {
-    res.status(404).json({ error: 'Target gate not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Target gate not found');
     return;
   }
 
@@ -107,6 +114,6 @@ router.post('/link', async (req, res) => {
   });
 
   res.json({ ok: true });
-});
+}));
 
 export default router;

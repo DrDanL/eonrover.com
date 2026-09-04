@@ -1,10 +1,11 @@
 import IORedis from 'ioredis';
 import { Queue } from 'bullmq';
+import { getApiConfig } from '../config';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const config = getApiConfig();
 
 export function createRedisConnection() {
-  return new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
+  return new IORedis(config.redisUrl, { maxRetriesPerRequest: null });
 }
 
 export const connection = createRedisConnection();

@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 
 const router = Router();
 router.use(requireAuth);
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const [inbox, sent] = await Promise.all([
     prisma.message.findMany({
       where: { recipientId: req.user!.id },
@@ -22,7 +23,7 @@ router.get('/', async (req, res) => {
     }),
   ]);
   res.json({ inbox, sent });
-});
+}));
 
 const sendSchema = z.object({
   recipientUsername: z.string().min(1),
@@ -30,15 +31,15 @@ const sendSchema = z.object({
   body: z.string().min(1).max(4000),
 });
 
-router.post('/', async (req, res) => {
+router.post('/', asyncHandler(async (req, res) => {
   const parsed = sendSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid input' });
+    sendValidationError(res, parsed.error);
     return;
   }
   const recipient = await prisma.user.findUnique({ where: { username: parsed.data.recipientUsername } });
   if (!recipient) {
-    res.status(404).json({ error: 'Recipient not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Recipient not found');
     return;
   }
   const message = await prisma.message.create({
@@ -53,16 +54,16 @@ router.post('/', async (req, res) => {
     data: { userId: recipient.id, type: 'MESSAGE', message: `New message from ${req.user!.username}` },
   });
   res.status(201).json({ message });
-});
+}));
 
-router.post('/:id/read', async (req, res) => {
+router.post('/:id/read', asyncHandler(async (req, res) => {
   const message = await prisma.message.findUnique({ where: { id: req.params.id } });
   if (!message || message.recipientId !== req.user!.id) {
-    res.status(404).json({ error: 'Message not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Message not found');
     return;
   }
   await prisma.message.update({ where: { id: message.id }, data: { readAt: new Date() } });
   res.json({ message: 'Marked as read' });
-});
+}));
 
 export default router;

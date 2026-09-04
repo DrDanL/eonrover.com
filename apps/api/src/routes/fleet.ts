@@ -6,18 +6,19 @@ import { requireAuth } from '../middleware/auth';
 import { syncPlanetResources } from '../services/planetService';
 import { getUniverseConfig } from '../services/gameConfig';
 import { fleetQueue } from '../lib/redis';
+import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 
 const router = Router();
 router.use(requireAuth);
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const missions = await prisma.fleetMission.findMany({
     where: { origin: { ownerId: req.user!.id } },
     orderBy: { departedAt: 'desc' },
     take: 50,
   });
   res.json({ missions });
-});
+}));
 
 const shipsSchema = z.record(z.string(), z.number().int().min(0));
 const sendSchema = z.object({
@@ -31,32 +32,32 @@ const sendSchema = z.object({
   speedPercent: z.number().int().min(10).max(100).default(100),
 });
 
-router.post('/', async (req, res) => {
+router.post('/', asyncHandler(async (req, res) => {
   const parsed = sendSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+    sendValidationError(res, parsed.error);
     return;
   }
   const data = parsed.data;
   const origin = await prisma.planet.findUnique({ where: { id: data.originId } });
   if (!origin || origin.ownerId !== req.user!.id) {
-    res.status(404).json({ error: 'Origin planet not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Origin planet not found');
     return;
   }
 
   const requestedShips = Object.entries(data.ships).filter(([, count]) => count > 0);
   if (requestedShips.length === 0) {
-    res.status(400).json({ error: 'Select at least one ship' });
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Select at least one ship');
     return;
   }
   for (const [key] of requestedShips) {
     if (!(key in SHIPS)) {
-      res.status(400).json({ error: `Unknown ship ${key}` });
+      sendError(res, 400, ERROR_CODES.BAD_REQUEST, `Unknown ship ${key}`);
       return;
     }
   }
   if (data.missionType === 'COLONIZE' && (!requestedShips.some(([k]) => k === 'colonyShip'))) {
-    res.status(400).json({ error: 'Colonisation requires a colony ship' });
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Colonisation requires a colony ship');
     return;
   }
 
@@ -64,7 +65,7 @@ router.post('/', async (req, res) => {
   const ownedMap = new Map(ownedShips.map((s) => [s.key, s.count]));
   for (const [key, count] of requestedShips) {
     if ((ownedMap.get(key) ?? 0) < count) {
-      res.status(409).json({ error: `Not enough ${key} at origin` });
+      sendError(res, 409, ERROR_CODES.CONFLICT, `Not enough ${key} at origin`);
       return;
     }
   }
@@ -74,27 +75,27 @@ router.post('/', async (req, res) => {
   });
 
   if (data.missionType === 'COLONIZE' && target) {
-    res.status(409).json({ error: 'Target slot is already occupied' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Target slot is already occupied');
     return;
   }
   if (data.missionType !== 'COLONIZE' && data.missionType !== 'EXPLORE' && !target) {
-    res.status(404).json({ error: 'No planet at that location' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'No planet at that location');
     return;
   }
 
   if (data.missionType === 'GATE_TRAVEL') {
     if (!target) {
-      res.status(404).json({ error: 'No planet at that location' });
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'No planet at that location');
       return;
     }
     const originGate = await prisma.eonGate.findUnique({ where: { planetId: origin.id } });
     if (!originGate || !originGate.linkedGateId) {
-      res.status(409).json({ error: 'Origin planet has no linked Eon Gate' });
+      sendError(res, 409, ERROR_CODES.CONFLICT, 'Origin planet has no linked Eon Gate');
       return;
     }
     const targetGate = await prisma.eonGate.findUnique({ where: { planetId: target.id } });
     if (!targetGate || targetGate.id !== originGate.linkedGateId) {
-      res.status(409).json({ error: 'Target planet is not linked to this Eon Gate' });
+      sendError(res, 409, ERROR_CODES.CONFLICT, 'Target planet is not linked to this Eon Gate');
       return;
     }
   }
@@ -114,14 +115,14 @@ router.post('/', async (req, res) => {
   const cargo = data.cargo ?? { alloy: 0, heliox: 0, aether: 0 };
   const cargoTotal = cargo.alloy + cargo.heliox + cargo.aether;
   if (cargoTotal > cargoCapacity) {
-    res.status(400).json({ error: 'Cargo exceeds fleet capacity' });
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Cargo exceeds fleet capacity');
     return;
   }
 
   const { planet: fresh } = await syncPlanetResources(origin.id);
   const needed = { alloy: cargo.alloy, heliox: cargo.heliox + fuel, aether: cargo.aether };
   if (fresh.alloy < needed.alloy || fresh.heliox < needed.heliox || fresh.aether < needed.aether) {
-    res.status(402).json({ error: 'Insufficient resources for cargo/fuel', needed });
+    sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources for cargo/fuel', { needed });
     return;
   }
 
@@ -156,16 +157,16 @@ router.post('/', async (req, res) => {
   await prisma.fleetMission.update({ where: { id: mission.id }, data: { jobId: job.id } });
 
   res.status(201).json({ mission: { ...mission, jobId: job.id } });
-});
+}));
 
-router.post('/:id/recall', async (req, res) => {
+router.post('/:id/recall', asyncHandler(async (req, res) => {
   const mission = await prisma.fleetMission.findUnique({ where: { id: req.params.id }, include: { origin: true } });
   if (!mission || mission.origin.ownerId !== req.user!.id) {
-    res.status(404).json({ error: 'Mission not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Mission not found');
     return;
   }
   if (mission.status !== 'OUTBOUND') {
-    res.status(409).json({ error: 'Mission cannot be recalled' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Mission cannot be recalled');
     return;
   }
   if (mission.jobId) {
@@ -188,6 +189,6 @@ router.post('/:id/recall', async (req, res) => {
   );
   await prisma.fleetMission.update({ where: { id: mission.id }, data: { jobId: job.id } });
   res.json({ mission: updated });
-});
+}));
 
 export default router;

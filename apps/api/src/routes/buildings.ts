@@ -6,6 +6,7 @@ import { requireAuth } from '../middleware/auth';
 import { syncPlanetResources } from '../services/planetService';
 import { getBuildingLevels, getResearchLevels, requirementsMet } from '../services/requirements';
 import { buildQueue } from '../lib/redis';
+import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
@@ -16,10 +17,10 @@ async function assertOwnedPlanet(planetId: string, userId: string) {
   return planet;
 }
 
-router.get<{ planetId: string }>('/', async (req, res) => {
+router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) {
-    res.status(404).json({ error: 'Planet not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
   const levels = await getBuildingLevels(planet.id);
@@ -30,19 +31,23 @@ router.get<{ planetId: string }>('/', async (req, res) => {
   }));
   const pending = await prisma.buildQueueItem.findMany({ where: { planetId: planet.id, status: 'PENDING' } });
   res.json({ catalog, queue: pending });
-});
+}));
 
 const enqueueSchema = z.object({ key: z.string() });
 
-router.post<{ planetId: string }>('/', async (req, res) => {
+router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) {
-    res.status(404).json({ error: 'Planet not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
   const parsed = enqueueSchema.safeParse(req.body);
-  if (!parsed.success || !(parsed.data.key in BUILDINGS)) {
-    res.status(400).json({ error: 'Unknown building' });
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error);
+    return;
+  }
+  if (!(parsed.data.key in BUILDINGS)) {
+    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Unknown building');
     return;
   }
   const key = parsed.data.key as BuildingKey;
@@ -51,7 +56,7 @@ router.post<{ planetId: string }>('/', async (req, res) => {
     where: { planetId: planet.id, status: 'PENDING' },
   });
   if (existingQueueCount >= 5) {
-    res.status(409).json({ error: 'Build queue is full' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Build queue is full');
     return;
   }
 
@@ -63,14 +68,14 @@ router.post<{ planetId: string }>('/', async (req, res) => {
   const targetLevel = currentLevel + existingQueueCount + 1;
   const def = BUILDINGS[key];
   if (!requirementsMet(def.requires, buildingLevels, researchLevels)) {
-    res.status(409).json({ error: 'Requirements not met' });
+    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requirements not met');
     return;
   }
 
   const cost = buildingCost(key, targetLevel);
   const { planet: fresh } = await syncPlanetResources(planet.id);
   if (fresh.alloy < cost.alloy || fresh.heliox < cost.heliox || fresh.aether < cost.aether) {
-    res.status(402).json({ error: 'Insufficient resources', cost });
+    sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources', { cost });
     return;
   }
 
@@ -104,17 +109,17 @@ router.post<{ planetId: string }>('/', async (req, res) => {
   await prisma.buildQueueItem.update({ where: { id: result.id }, data: { jobId: job.id } });
 
   res.status(201).json({ queueItem: { ...result, jobId: job.id } });
-});
+}));
 
-router.delete<{ planetId: string; queueItemId: string }>('/:queueItemId', async (req, res) => {
+router.delete<{ planetId: string; queueItemId: string }>('/:queueItemId', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) {
-    res.status(404).json({ error: 'Planet not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
   const item = await prisma.buildQueueItem.findUnique({ where: { id: req.params.queueItemId } });
   if (!item || item.planetId !== planet.id || item.status !== 'PENDING') {
-    res.status(404).json({ error: 'Queue item not found' });
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Queue item not found');
     return;
   }
   const def = BUILDINGS[item.buildingKey as BuildingKey];
@@ -136,6 +141,6 @@ router.delete<{ planetId: string; queueItemId: string }>('/:queueItemId', async 
     await job?.remove().catch(() => undefined);
   }
   res.json({ message: 'Cancelled, 50% of resources refunded' });
-});
+}));
 
 export default router;
