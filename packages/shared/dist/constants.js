@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = void 0;
+exports.GATE_ACTIVATION_REQUIREMENTS = exports.GATE_TRAVEL_SECONDS = exports.GATE_ACTIVATION_FRAGMENTS = exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = void 0;
 exports.BUILDINGS = {
     alloyMine: {
         key: 'alloyMine',
@@ -346,3 +346,12 @@ exports.DEFAULT_UNIVERSE_CONFIG = {
 exports.STARTING_RESOURCES = { alloy: 500, heliox: 300, aether: 0 };
 exports.BASE_STORAGE_CAPACITY = 10000;
 exports.BASE_ENERGY_SUPPLY = 20;
+// --- Eon Gates ---------------------------------------------------------
+// Number of Gate Fragments a player must recover through exploration before
+// an Eon Gate can be activated on one of their planets.
+exports.GATE_ACTIVATION_FRAGMENTS = 3;
+// A gate jump between two linked, activated gates takes a small fixed time
+// instead of the normal distance-based flight calculation.
+exports.GATE_TRAVEL_SECONDS = 15;
+// Minimum building/research levels required to activate a gate.
+exports.GATE_ACTIVATION_REQUIREMENTS = { gateObservatory: 1, gateTheory: 1 };

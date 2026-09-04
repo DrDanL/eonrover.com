@@ -69,3 +69,9 @@ export declare const DEFAULT_UNIVERSE_CONFIG: UniverseConfig;
 export declare const STARTING_RESOURCES: ResourceAmounts;
 export declare const BASE_STORAGE_CAPACITY = 10000;
 export declare const BASE_ENERGY_SUPPLY = 20;
+export declare const GATE_ACTIVATION_FRAGMENTS = 3;
+export declare const GATE_TRAVEL_SECONDS = 15;
+export declare const GATE_ACTIVATION_REQUIREMENTS: {
+    readonly gateObservatory: 1;
+    readonly gateTheory: 1;
+};

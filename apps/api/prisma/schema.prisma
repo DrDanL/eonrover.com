@@ -226,6 +226,7 @@ enum MissionType {
   COLONIZE
   EXPLORE
   RETURN
+  GATE_TRAVEL
 }
 
 enum MissionStatus {

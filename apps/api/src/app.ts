@@ -11,6 +11,7 @@ import buildingRoutes from './routes/buildings';
 import researchRoutes from './routes/research';
 import shipyardRoutes from './routes/shipyard';
 import fleetRoutes from './routes/fleet';
+import gateRoutes from './routes/gates';
 import galaxyRoutes from './routes/galaxy';
 import messageRoutes from './routes/messages';
 import allianceRoutes from './routes/alliances';
@@ -57,6 +58,7 @@ export function createApp(): Express {
   app.use('/api/planets/:planetId/shipyard', shipyardRoutes);
   app.use('/api/research', researchRoutes);
   app.use('/api/fleet', fleetRoutes);
+  app.use('/api/gates', gateRoutes);
   app.use('/api/galaxy', galaxyRoutes);
   app.use('/api/messages', messageRoutes);
   app.use('/api/alliances', allianceRoutes);

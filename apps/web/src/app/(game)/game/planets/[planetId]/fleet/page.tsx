@@ -8,7 +8,7 @@ import { enumLabel, formatCoords, formatDateTime, formatNumber } from '@/lib/for
 import { getErrorMessage, useApiData } from '@/lib/useApiData';
 import { FleetMission, PlanetSummary, ShipyardCatalogItem } from '@/lib/web-types';
 
-const MISSIONS = ['TRANSPORT', 'DEPLOY', 'ESPIONAGE', 'ATTACK', 'RAID', 'RECYCLE', 'COLONIZE', 'EXPLORE'] as const;
+const MISSIONS = ['TRANSPORT', 'DEPLOY', 'ESPIONAGE', 'ATTACK', 'RAID', 'RECYCLE', 'COLONIZE', 'EXPLORE', 'GATE_TRAVEL'] as const;
 
 export default function FleetPage() {
   const params = useParams<{ planetId: string }>();

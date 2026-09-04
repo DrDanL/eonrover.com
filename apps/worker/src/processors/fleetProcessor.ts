@@ -115,7 +115,8 @@ async function handleArrival(mission: NonNullable<Awaited<ReturnType<typeof load
       await scheduleReturn(mission.id, ships, { alloy: 0, heliox: 0, aether: 0 });
       return;
     }
-    case 'DEPLOY': {
+    case 'DEPLOY':
+    case 'GATE_TRAVEL': {
       if (mission.target) {
         await prisma.$transaction(async (tx) => {
           for (const [key, count] of Object.entries(ships)) {

@@ -293,3 +293,19 @@ export interface EspionageReport {
   accuracy: number;
   data: unknown;
 }
+
+export interface GateFragment {
+  id: string;
+  ownerId: string;
+  planetId: string;
+  fragmentKey: string;
+  discoveredAt: string;
+}
+
+export interface EonGateSummary {
+  id: string;
+  planetId: string;
+  activatedAt: string;
+  linkedGateId?: string | null;
+  isVisible: boolean;
+}

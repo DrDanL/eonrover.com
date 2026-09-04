@@ -17,6 +17,7 @@ export default function PlanetSidebar({ showAdminLink }: { showAdminLink: boolea
       items: [
         { href: '/game', label: 'Command' },
         { href: '/game/galaxy', label: 'Galaxy' },
+        { href: '/game/gates', label: 'Eon Gates' },
         { href: '/game/messages', label: 'Messages' },
         { href: '/game/alliances', label: 'Alliances' },
         { href: '/game/leaderboard', label: 'Leaderboard' },

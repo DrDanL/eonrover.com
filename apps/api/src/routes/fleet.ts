@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { ShipKey, SHIPS, distanceBetween, flightDurationSeconds, fuelConsumption } from '@eonrover/shared';
+import { ShipKey, SHIPS, distanceBetween, flightDurationSeconds, fuelConsumption, GATE_TRAVEL_SECONDS } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 import { syncPlanetResources } from '../services/planetService';
@@ -25,7 +25,7 @@ const sendSchema = z.object({
   targetGalaxy: z.number().int().min(1),
   targetSystem: z.number().int().min(1),
   targetSlot: z.number().int().min(1),
-  missionType: z.enum(['TRANSPORT', 'DEPLOY', 'ESPIONAGE', 'ATTACK', 'RAID', 'RECYCLE', 'COLONIZE', 'EXPLORE']),
+  missionType: z.enum(['TRANSPORT', 'DEPLOY', 'ESPIONAGE', 'ATTACK', 'RAID', 'RECYCLE', 'COLONIZE', 'EXPLORE', 'GATE_TRAVEL']),
   ships: shipsSchema,
   cargo: z.object({ alloy: z.number().min(0), heliox: z.number().min(0), aether: z.number().min(0) }).optional(),
   speedPercent: z.number().int().min(10).max(100).default(100),
@@ -82,14 +82,33 @@ router.post('/', async (req, res) => {
     return;
   }
 
+  if (data.missionType === 'GATE_TRAVEL') {
+    if (!target) {
+      res.status(404).json({ error: 'No planet at that location' });
+      return;
+    }
+    const originGate = await prisma.eonGate.findUnique({ where: { planetId: origin.id } });
+    if (!originGate || !originGate.linkedGateId) {
+      res.status(409).json({ error: 'Origin planet has no linked Eon Gate' });
+      return;
+    }
+    const targetGate = await prisma.eonGate.findUnique({ where: { planetId: target.id } });
+    if (!targetGate || targetGate.id !== originGate.linkedGateId) {
+      res.status(409).json({ error: 'Target planet is not linked to this Eon Gate' });
+      return;
+    }
+  }
+
   const distance = distanceBetween(
     { galaxy: origin.galaxy, system: origin.system, slot: origin.slot },
     { galaxy: data.targetGalaxy, system: data.targetSystem, slot: data.targetSlot },
   );
   const slowestSpeed = Math.min(...requestedShips.map(([key]) => SHIPS[key as ShipKey].speed));
   const config = await getUniverseConfig();
-  const durationSeconds = flightDurationSeconds(distance, slowestSpeed, data.speedPercent, config.fleetSpeed);
-  const fuel = fuelConsumption(Object.fromEntries(requestedShips) as Partial<Record<ShipKey, number>>, distance, durationSeconds);
+  const durationSeconds =
+    data.missionType === 'GATE_TRAVEL' ? GATE_TRAVEL_SECONDS : flightDurationSeconds(distance, slowestSpeed, data.speedPercent, config.fleetSpeed);
+  const fuel =
+    data.missionType === 'GATE_TRAVEL' ? 0 : fuelConsumption(Object.fromEntries(requestedShips) as Partial<Record<ShipKey, number>>, distance, durationSeconds);
 
   const cargoCapacity = requestedShips.reduce((sum, [key, count]) => sum + SHIPS[key as ShipKey].cargo * count, 0);
   const cargo = data.cargo ?? { alloy: 0, heliox: 0, aether: 0 };

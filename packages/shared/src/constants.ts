@@ -419,3 +419,13 @@ export const DEFAULT_UNIVERSE_CONFIG: UniverseConfig = {
 export const STARTING_RESOURCES: ResourceAmounts = { alloy: 500, heliox: 300, aether: 0 };
 export const BASE_STORAGE_CAPACITY = 10000;
 export const BASE_ENERGY_SUPPLY = 20;
+
+// --- Eon Gates ---------------------------------------------------------
+// Number of Gate Fragments a player must recover through exploration before
+// an Eon Gate can be activated on one of their planets.
+export const GATE_ACTIVATION_FRAGMENTS = 3;
+// A gate jump between two linked, activated gates takes a small fixed time
+// instead of the normal distance-based flight calculation.
+export const GATE_TRAVEL_SECONDS = 15;
+// Minimum building/research levels required to activate a gate.
+export const GATE_ACTIVATION_REQUIREMENTS = { gateObservatory: 1, gateTheory: 1 } as const;
