@@ -4,6 +4,11 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') {
+    console.log('Development administrator provisioning is disabled in production.');
+    return;
+  }
+
   const email = process.env.ADMIN_EMAIL;
   const username = process.env.ADMIN_USERNAME;
   const password = process.env.ADMIN_PASSWORD;
@@ -15,7 +20,7 @@ async function main() {
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    console.log(`Admin account for ${email} already exists, skipping seed.`);
+    console.log('The configured development administrator already exists, skipping seed.');
     return;
   }
 
@@ -30,7 +35,7 @@ async function main() {
       emailVerifiedAt: new Date(),
     },
   });
-  console.log(`Created development administrator ${username} <${email}>.`);
+  console.log('Created the configured development administrator.');
 }
 
 main()

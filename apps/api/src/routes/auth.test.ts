@@ -1,7 +1,16 @@
 import request from 'supertest';
 import { createApp } from '../app';
+import { sendMail } from '../lib/mailer';
 import { prisma } from '../lib/prisma';
+import { verificationTokenFromMail } from '../testUtils/verificationMail';
+
+jest.mock('../lib/mailer', () => ({
+  ...jest.requireActual('../lib/mailer'),
+  sendMail: jest.fn().mockResolvedValue(undefined),
+}));
+
 const app = createApp();
+const mockedSendMail = sendMail as jest.MockedFunction<typeof sendMail>;
 
 async function registerAndVerify(email: string, username: string, password = 'Password123') {
   await request(app)
@@ -9,11 +18,11 @@ async function registerAndVerify(email: string, username: string, password = 'Pa
     .set('X-Eonrover-Client', '1')
     .send({ email, username, password })
     .expect(201);
-  const token = await prisma.verificationToken.findFirstOrThrow({ where: { user: { email } } });
+  const token = verificationTokenFromMail(mockedSendMail.mock.calls, email);
   await request(app)
     .post('/api/auth/verify-email')
     .set('X-Eonrover-Client', '1')
-    .send({ token: token.token })
+    .send({ token })
     .expect(200);
 }
 

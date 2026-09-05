@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import ResendVerificationForm from '@/components/ResendVerificationForm';
 import StatusPanel from '@/components/StatusPanel';
 import { apiPost } from '@/lib/api';
 import { getErrorMessage } from '@/lib/useApiData';
@@ -51,6 +52,12 @@ function VerifyEmailContent() {
       {loading ? <StatusPanel message="Verifying token..." /> : null}
       {!loading && error ? <StatusPanel tone="error" title="Verification failed" message={error} /> : null}
       {!loading && message ? <StatusPanel tone="success" title="Verification complete" message={message} /> : null}
+      {!loading && !message ? (
+        <div className="stack">
+          <h2 style={{ marginBottom: 0 }}>Request a new link</h2>
+          <ResendVerificationForm />
+        </div>
+      ) : null}
       <div className="panel stack">
         <Link href="/login">Proceed to sign in</Link>
       </div>

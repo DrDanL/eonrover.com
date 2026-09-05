@@ -12,6 +12,7 @@ async function playerSessionCookie(): Promise<string> {
       username: 'role-check',
       passwordHash: 'not-used-in-this-test',
       status: 'ACTIVE',
+      emailVerifiedAt: new Date(),
     },
   });
   const session = await prisma.session.create({

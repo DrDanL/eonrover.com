@@ -238,11 +238,49 @@ export interface AdminUser {
   id: string;
   email: string;
   username: string;
-  role: string;
-  status: 'ACTIVE' | 'SUSPENDED' | 'BANNED';
+  role: 'PLAYER' | 'MODERATOR' | 'ADMIN';
+  status: 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | 'BANNED';
+  emailVerified: boolean;
   createdAt: string;
-  lastLoginAt?: string | null;
-  lastActiveAt?: string | null;
+  planetCount: number;
+}
+
+export interface AdminPlayerState {
+  player: AdminUser & {
+    protectedUntil: string | null;
+    activeSessionCount: number;
+    unreadNotificationCount: number;
+  };
+  planets: Array<{
+    id: string;
+    name: string;
+    isHomeworld: boolean;
+    galaxy: number;
+    system: number;
+    position: number;
+    planetType: string;
+    environment: {
+      temperature: number;
+      solarIndex: number;
+    };
+    resources: ResourceAmounts;
+    lastProductionAt: string;
+    production: ResourceAmounts;
+    energy: {
+      supply: number;
+      demand: number;
+      efficiency: number;
+    };
+    storage: ResourceAmounts;
+    buildings: Array<{ key: string; level: number }>;
+    activeConstruction: {
+      buildingKey: string;
+      targetLevel: number;
+      status: 'PENDING';
+      startedAt: string;
+      completesAt: string;
+    } | null;
+  }>;
 }
 
 export interface QueueJob {

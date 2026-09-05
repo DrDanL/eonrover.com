@@ -2,11 +2,13 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
   details?: unknown;
-  constructor(message: string, status: number, details?: unknown) {
+  constructor(message: string, status: number, details?: unknown, code?: string) {
     super(message);
     this.status = status;
     this.details = details;
+    this.code = code;
   }
 }
 
@@ -29,7 +31,8 @@ export async function apiFetch<T = unknown>(path: string, options: RequestInit =
   const body = text ? JSON.parse(text) : {};
 
   if (!res.ok) {
-    throw new ApiError((body as { error?: string }).error || 'Request failed', res.status, body);
+    const errorBody = body as { error?: string; code?: string; details?: unknown };
+    throw new ApiError(errorBody.error || 'Request failed', res.status, body, errorBody.code);
   }
   return body as T;
 }

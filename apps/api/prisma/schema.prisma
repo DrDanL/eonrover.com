@@ -149,6 +149,9 @@ model BuildQueueItem {
   planet      Planet      @relation(fields: [planetId], references: [id], onDelete: Cascade)
   buildingKey String
   targetLevel Int
+  costAlloy   Int
+  costHeliox  Int
+  costAether  Int
   startedAt   DateTime    @default(now())
   completesAt DateTime
   status      QueueStatus @default(PENDING)

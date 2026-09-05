@@ -6,6 +6,11 @@ import { requireAuth, requireRole } from '../middleware/auth';
 import { getUniverseConfig, setUniverseConfigValue } from '../services/gameConfig';
 import { buildQueue, connection, fleetQueue, researchQueue, shipyardQueue } from '../lib/redis';
 import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
+import {
+  ADMIN_PLAYER_SEARCH_MAX_PAGE_SIZE,
+  getAdminPlayerState,
+  searchAdminPlayers,
+} from '../services/adminPlayerStateService';
 
 const router = Router();
 router.use(requireAuth, requireRole('ADMIN', 'MODERATOR'));
@@ -34,42 +39,34 @@ router.get('/dashboard', asyncHandler(async (_req, res) => {
   res.json({ userCount, activeUsers, planetCount, fleetsInFlight, alliances, queues: queueCounts });
 }));
 
-router.get('/users', asyncHandler(async (req, res) => {
-  const q = typeof req.query.q === 'string' ? req.query.q : '';
-  const users = await prisma.user.findMany({
-    where: q
-      ? { OR: [{ username: { contains: q, mode: 'insensitive' } }, { email: { contains: q, mode: 'insensitive' } }] }
-      : undefined,
-    take: 50,
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      email: true,
-      username: true,
-      role: true,
-      status: true,
-      createdAt: true,
-      lastLoginAt: true,
-      lastActiveAt: true,
-    },
-  });
-  res.json({ users });
-}));
+const playerSearchSchema = z.object({
+  q: z.string().trim().min(2).max(100),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(ADMIN_PLAYER_SEARCH_MAX_PAGE_SIZE).default(20),
+});
 
-router.get('/users/:id', asyncHandler(async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.params.id },
-    include: {
-      planets: { include: { buildings: true, ships: true, defences: true } },
-      allianceMembership: { include: { alliance: true } },
-    },
-  });
-  if (!user) {
-    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'User not found');
+router.get('/users', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const parsed = playerSearchSchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error, 'Invalid player search');
     return;
   }
-  const { passwordHash: _passwordHash, ...safeUser } = user;
-  res.json({ user: safeUser });
+  const result = await searchAdminPlayers({
+    query: parsed.data.q,
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+  });
+  res.json(result);
+}));
+
+router.get('/users/:id', requireRole('ADMIN'), asyncHandler(async (req, res) => {
+  const state = await getAdminPlayerState(req.params.id);
+  if (!state) {
+    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Player not found');
+    return;
+  }
+  await logAudit(req.user!.id, 'PLAYER_STATE_VIEWED', 'User', state.player.id);
+  res.json(state);
 }));
 
 const statusSchema = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']) });

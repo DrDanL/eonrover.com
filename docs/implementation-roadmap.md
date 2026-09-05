@@ -14,7 +14,23 @@ The repository already contains a broad prototype. The fastest route to a playab
 
 PostgreSQL should be the source of truth for game/workflow state. BullMQ can remain as the existing timer/wake-up mechanism, but correctness must not depend on one Redis job surviving. No additional service is justified for the initial slice.
 
-Each stage below is intentionally narrow, ordered, and independently testable. Advanced systems should remain feature-frozen until Stage 6 passes.
+Each stage below is intentionally narrow, ordered, and independently testable. Advanced systems should remain feature-frozen until the trusted vertical slice passes.
+
+## Implementation status — trusted vertical slice
+
+The local 2026-09-05 checkpoint completes the narrowed Stage 0–4B execution plan:
+
+| Execution stage | Status | Implemented outcome |
+| --- | --- | --- |
+| Stage 0 | Complete | Integration cleanup is guarded by an explicit disposable test URL/name and reset opt-in. |
+| Stages 1A–1C | Complete | Runtime configuration, normalized failure boundaries, and separate dependency-free liveness/dependency-aware readiness are in place. |
+| Stages 2A–2C | Complete | Registration/homeworld provisioning is atomic, email verification is recoverable and digest-backed, and normalized login uses digest-backed revocable sessions. |
+| Stage 3A | Complete | Server-timestamp production is row-locked, deterministic, fractional, storage/energy aware, and exposed with authoritative rates. |
+| Stages 3B1–3B2 | Complete | One building start/cancellation is atomic; completion is transactional, time-segmented, idempotent, API-fallback capable, and reconciled from PostgreSQL. |
+| Stage 4A | Complete | An opt-in project-scoped six-service harness proves the player slice, full-stack restart persistence, redaction, and cleanup. |
+| Stage 4B | Complete | Admin-only bounded search and audited, explicit, read-only authoritative player/planet inspection are connected and verified. |
+
+This execution numbering narrows the original roadmap: Stage 4A covers the vertical-slice portion of original Stage 5, and Stage 4B covers the protected read-only inspection portion of original Stage 6. Broader original Stage 5/6 criteria—forced-termination/Redis-loss matrices, backup/restore rehearsal, dependency-readiness UI, browser viewport/accessibility coverage, and existing mutation cleanup—remain future work and are not claimed by this checkpoint. Original Stages 7–14 are unstarted.
 
 ## Stage 0 — make verification safe and repeatable
 
@@ -428,21 +444,20 @@ Do not proceed to the systems below until all of these are true:
 
 **Decisions before implementation:** Hosting target, expected concurrency/data retention, observability provider/budget, accessibility conformance target, and visual direction. Do not add infrastructure until these concrete requirements demand it.
 
-## Recommended first implementation task
+## Current checkpoint and next work
 
-Start with **Stage 0: test-database isolation and vertical-slice regression scaffolding**. Specifically, replace the current “any `DATABASE_URL` permits deletion” check with an explicit `TEST_DATABASE_URL` plus destructive opt-in/name guard, document the disposable database command, and add the first failing integration test that characterizes registration → exactly one homeworld without changing gameplay code. This is small, independently verifiable, removes the largest immediate data-loss risk, and creates the safe harness needed for every subsequent fix.
+The trusted vertical slice is implemented through Stage 4B. This checkpoint deliberately stops there; the next implementation stage must be selected separately rather than inferred from this commit.
 
 ## Decisions needed from the project owner
 
-The implementation can begin with Stage 0 without product decisions. Before later stages, confirm:
+The vertical-slice decisions have been resolved as follows: create the homeworld during the atomic registration transaction; trim/lowercase email while keeping trimmed usernames case-sensitive; retain fractional `DOUBLE PRECISION` resource balances; cap production while preserving the existing non-production addition rules; allow one active building per planet; treat PostgreSQL as authoritative for building reconciliation; reserve player-state inspection for administrators; and treat Compose as local/disposable infrastructure.
 
-1. Whether the homeworld is allocated at registration, verification, or first login.
-2. Case-insensitive/canonical rules for email and username.
-3. Fixed-point resource precision and the storage rule for deliveries/refunds/loot.
-4. One active building per planet for the vertical slice (recommended) versus a queue immediately.
-5. PostgreSQL-authoritative job reconciliation and the exact restart/failure guarantee.
-6. Moderator inclusion and the role permission matrix.
-7. Coordinate bounds, fleet slots, cross-player transport, and deploy ownership.
-8. New-player protection rules and when protection ends.
-9. Final combat/debris/loot/randomness rules before adversarial missions are released.
-10. Whether current Compose is local-only (recommended) and the eventual deployment target.
+Before later stages, confirm the remaining product decisions:
+
+1. Storage rules for deliveries, refunds, loot, and other non-production additions, plus any future fixed-point migration.
+2. General ordered-building-queue semantics after the one-active-item invariant.
+3. Moderator permissions and the broader administrative mutation matrix.
+4. Coordinate bounds, fleet slots, cross-player transport, and deploy ownership.
+5. New-player protection rules and when protection ends.
+6. Final combat/debris/loot/randomness rules before adversarial missions are released.
+7. The eventual production deployment target and its operational requirements.

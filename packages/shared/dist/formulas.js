@@ -13,6 +13,7 @@ exports.totalEnergySupply = totalEnergySupply;
 exports.energyEfficiency = energyEfficiency;
 exports.planetProductionMultiplier = planetProductionMultiplier;
 exports.accumulateProduction = accumulateProduction;
+exports.calculatePlanetProduction = calculatePlanetProduction;
 exports.distanceBetween = distanceBetween;
 exports.flightDurationSeconds = flightDurationSeconds;
 exports.fuelConsumption = fuelConsumption;
@@ -114,10 +115,88 @@ function planetProductionMultiplier(env, resource) {
  * resources accumulated since then, capped at storage capacity.
  */
 function accumulateProduction(currentAmount, hourlyRate, secondsElapsed, capacity) {
+    if (![currentAmount, hourlyRate, secondsElapsed, capacity].every(Number.isFinite)) {
+        throw new RangeError('Production values must be finite numbers');
+    }
+    if (hourlyRate < 0 || capacity < 0) {
+        throw new RangeError('Production rates and storage capacities cannot be negative');
+    }
+    const boundedCurrent = Math.min(capacity, Math.max(0, currentAmount));
     if (secondsElapsed <= 0)
-        return currentAmount;
+        return boundedCurrent;
     const gained = (hourlyRate * secondsElapsed) / 3600;
-    return Math.min(capacity, currentAmount + Math.max(0, gained));
+    const result = Math.min(capacity, boundedCurrent + gained);
+    if (!Number.isFinite(result))
+        throw new RangeError('Calculated production must be finite');
+    return Math.max(0, result);
+}
+const RESOURCE_PRODUCTION_BUILDING = {
+    alloy: 'alloyMine',
+    heliox: 'helioxExtractor',
+    aether: 'aetherSynthesizer',
+};
+function requireFinite(label, value) {
+    if (!Number.isFinite(value))
+        throw new RangeError(`${label} must be a finite number`);
+}
+/**
+ * Deterministically advances one planet from an explicit prior timestamp to
+ * an explicit server timestamp. Resource Floats retain fractional production,
+ * so no per-read rounding or separate remainder field is needed.
+ */
+function calculatePlanetProduction(input) {
+    const previousTime = input.previousProductionAt.getTime();
+    const currentTime = input.currentTime.getTime();
+    requireFinite('Previous production timestamp', previousTime);
+    requireFinite('Current production timestamp', currentTime);
+    requireFinite('Planet temperature', input.environment.temperature);
+    requireFinite('Planet solar index', input.environment.solarIndex);
+    requireFinite('Energy supply', input.energySupply);
+    requireFinite('Energy demand', input.energyDemand);
+    requireFinite('Economy speed', input.economySpeed);
+    if (!(input.environment.type in constants_1.PLANET_TYPES))
+        throw new RangeError('Unknown planet type');
+    if (input.energySupply < 0 || input.energyDemand < 0 || input.economySpeed < 0) {
+        throw new RangeError('Energy and economy values cannot be negative');
+    }
+    const productionModifier = input.productionModifier ?? 1;
+    requireFinite('Production modifier', productionModifier);
+    if (productionModifier < 0)
+        throw new RangeError('Production modifier cannot be negative');
+    for (const [key, level] of Object.entries(input.buildingLevels)) {
+        requireFinite(`${key} level`, level);
+        if (level < 0)
+            throw new RangeError('Building levels cannot be negative');
+    }
+    const efficiency = energyEfficiency(input.energySupply, input.energyDemand);
+    const elapsedSeconds = Math.max(0, (currentTime - previousTime) / 1000);
+    const resources = {};
+    const hourlyRates = {};
+    for (const resource of ['alloy', 'heliox', 'aether']) {
+        const current = input.resources[resource];
+        const capacity = input.storage[resource];
+        requireFinite(`${resource} balance`, current);
+        requireFinite(`${resource} storage`, capacity);
+        if (capacity < 0)
+            throw new RangeError('Storage capacities cannot be negative');
+        const building = RESOURCE_PRODUCTION_BUILDING[resource];
+        const level = input.buildingLevels[building] ?? 0;
+        const planetMultiplier = planetProductionMultiplier(input.environment, resource);
+        requireFinite(`${resource} planet multiplier`, planetMultiplier);
+        const hourlyRate = hourlyProduction(building, level, planetMultiplier, input.economySpeed, productionModifier) * efficiency;
+        requireFinite(`${resource} hourly production`, hourlyRate);
+        if (hourlyRate < 0)
+            throw new RangeError('Hourly production cannot be negative');
+        hourlyRates[resource] = hourlyRate;
+        resources[resource] = accumulateProduction(current, hourlyRate, elapsedSeconds, capacity);
+    }
+    return {
+        resources,
+        lastProductionAt: new Date(elapsedSeconds > 0 ? currentTime : previousTime),
+        elapsedSeconds,
+        hourlyRates,
+        energyEfficiency: efficiency,
+    };
 }
 /** Straight-line distance between two coordinates in a galaxy/system/slot addressing scheme. */
 function distanceBetween(a, b) {

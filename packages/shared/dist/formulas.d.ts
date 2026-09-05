@@ -41,6 +41,31 @@ export declare function planetProductionMultiplier(env: PlanetEnvironment, resou
  * resources accumulated since then, capped at storage capacity.
  */
 export declare function accumulateProduction(currentAmount: number, hourlyRate: number, secondsElapsed: number, capacity: number): number;
+export interface PlanetProductionInput {
+    previousProductionAt: Date;
+    currentTime: Date;
+    resources: ResourceAmounts;
+    buildingLevels: Partial<Record<BuildingKey, number>>;
+    environment: PlanetEnvironment;
+    storage: ResourceAmounts;
+    energySupply: number;
+    energyDemand: number;
+    economySpeed: number;
+    productionModifier?: number;
+}
+export interface PlanetProductionResult {
+    resources: ResourceAmounts;
+    lastProductionAt: Date;
+    elapsedSeconds: number;
+    hourlyRates: ResourceAmounts;
+    energyEfficiency: number;
+}
+/**
+ * Deterministically advances one planet from an explicit prior timestamp to
+ * an explicit server timestamp. Resource Floats retain fractional production,
+ * so no per-read rounding or separate remainder field is needed.
+ */
+export declare function calculatePlanetProduction(input: PlanetProductionInput): PlanetProductionResult;
 /** Straight-line distance between two coordinates in a galaxy/system/slot addressing scheme. */
 export declare function distanceBetween(a: {
     galaxy: number;

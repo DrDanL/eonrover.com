@@ -1,6 +1,11 @@
 import { NextFunction, Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
-import { SESSION_COOKIE } from '../lib/auth';
+import {
+  clearSessionCookie,
+  isUserPermittedToSignIn,
+  resolveSessionToken,
+  SESSION_COOKIE,
+} from '../lib/auth';
 import { asyncHandler, ERROR_CODES, sendError } from './error';
 
 declare global {
@@ -20,18 +25,31 @@ declare global {
 }
 
 export const requireAuth = asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  const sid = req.cookies?.[SESSION_COOKIE];
-  if (!sid) {
+  const rawToken = req.cookies?.[SESSION_COOKIE];
+  if (typeof rawToken !== 'string' || !rawToken) {
     sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
     return;
   }
-  const session = await prisma.session.findUnique({ where: { id: sid }, include: { user: true } });
-  if (!session || session.expiresAt < new Date()) {
-    sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Session expired');
+
+  const now = new Date();
+  const session = await resolveSessionToken(rawToken, now);
+  if (!session) {
+    clearSessionCookie(res);
+    sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
     return;
   }
-  if (session.user.status === 'SUSPENDED' || session.user.status === 'BANNED') {
-    sendError(res, 403, ERROR_CODES.FORBIDDEN, 'Account is suspended');
+
+  if (session.expiresAt <= now) {
+    await prisma.session.deleteMany({ where: { id: session.id } });
+    clearSessionCookie(res);
+    sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
+    return;
+  }
+
+  if (!isUserPermittedToSignIn(session.user)) {
+    await prisma.session.deleteMany({ where: { id: session.id } });
+    clearSessionCookie(res);
+    sendError(res, 403, ERROR_CODES.ACCOUNT_UNAVAILABLE, 'This account is unavailable.');
     return;
   }
   req.user = {

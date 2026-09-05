@@ -35,7 +35,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {
               items: [
                 { href: '/admin', label: 'Dashboard' },
-                { href: '/admin/users', label: 'Users' },
+                ...(user.role === 'ADMIN' ? [{ href: '/admin/users', label: 'Player state' }] : []),
                 { href: '/admin/announcements', label: 'Announcements' },
                 { href: '/admin/config', label: 'Config' },
                 { href: '/admin/jobs', label: 'Jobs' },

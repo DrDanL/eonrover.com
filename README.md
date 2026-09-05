@@ -45,8 +45,10 @@ docker compose up --build
 ```
 
 This builds and starts Postgres, Redis, Mailpit, the API, the worker and the web app, applying
-database migrations and seeding a single admin account (from `ADMIN_EMAIL`/`ADMIN_USERNAME`/
-`ADMIN_PASSWORD` in `.env`) automatically on first boot.
+database migrations and provisioning a single development admin account from `ADMIN_EMAIL`,
+`ADMIN_USERNAME`, and `ADMIN_PASSWORD` in `.env`. Provisioning is idempotent, skips creation when
+any value is missing, does not log the configured identity or credentials, and is disabled when
+`NODE_ENV=production`.
 
 Once every service reports healthy:
 
@@ -203,6 +205,39 @@ Build verification remains a separate command:
 npm run build
 ```
 
+### Disposable full-stack vertical-slice verification
+
+`npm test` runs the unit and isolated-database integration suites; it does not build, start, restart,
+or remove a Docker stack. The opt-in vertical-slice command exercises the public registration,
+Mailpit verification, login, planet, production, and building APIs through running API, worker, web,
+PostgreSQL, Redis, and Mailpit containers. It also provisions a generated development administrator,
+proves the player cannot access administrator state, and checks the administrator's read-only view of
+the completed homeworld before and after a full-stack restart.
+
+Docker Engine and Docker Compose must be available. Run the verification from the repository root:
+
+```bash
+ALLOW_DISPOSABLE_E2E=1 npm run test:vertical-slice
+```
+
+The command generates a unique Compose project whose name matches `eonrover-e2e-*`, binds every
+published service to randomly selected loopback ports, and uses project-specific PostgreSQL, Redis,
+and Mailpit volumes. It refuses to run without the exact opt-in, with an unsafe project name, or with
+a database URL outside its fixed disposable Compose database. Generated passwords, verification
+tokens, session cookies, and database credentials are redacted from its output.
+
+On success or failure, a `finally` cleanup removes only that project's containers, network, and
+volumes. It never targets the normal development project or its volumes. To choose a recognizable
+safe project name for troubleshooting, set (for example)
+`EONROVER_E2E_PROJECT=eonrover-e2e-local-check`; the required prefix and safe-name validation still
+apply, and the harness refuses to reuse a name that already has containers, networks, or volumes.
+
+If startup reports an occupied port, rerun the command: ports are selected afresh for every run.
+Inspect the sanitized service diagnostics printed on failure and check Docker's available disk and
+memory rather than stopping unrelated containers. A stale project from an externally interrupted
+run can be removed only after verifying its `eonrover-e2e-*` name, using the same two Compose files
+and `docker compose --project-name <safe-name> down --volumes --remove-orphans`.
+
 ## Linting
 
 ```bash
@@ -236,9 +271,9 @@ uses development credentials.
 A production platform must provide the variables marked required above, set
 `NODE_ENV=production`, use non-local PostgreSQL/Redis/SMTP endpoints, and terminate HTTPS in front
 of the web and API services. The API container validates its full runtime configuration before it
-applies migrations, runs the optional administrator seed, or starts the HTTP listener. The worker
-validates before creating its database client, Redis connection, queues, workers, or health
-listener.
+applies migrations or starts the HTTP listener; the development administrator provisioner refuses
+to create an account in production. The worker validates before creating its database client, Redis
+connection, queues, workers, or health listener.
 
 ## Environment variables
 

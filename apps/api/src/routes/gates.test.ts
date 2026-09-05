@@ -1,7 +1,16 @@
 import request from 'supertest';
 import { createApp } from '../app';
+import { sendMail } from '../lib/mailer';
 import { prisma } from '../lib/prisma';
+import { verificationTokenFromMail } from '../testUtils/verificationMail';
+
+jest.mock('../lib/mailer', () => ({
+  ...jest.requireActual('../lib/mailer'),
+  sendMail: jest.fn().mockResolvedValue(undefined),
+}));
+
 const app = createApp();
+const mockedSendMail = sendMail as jest.MockedFunction<typeof sendMail>;
 
 async function createLoggedInPlayer(email: string, username: string) {
   await request(app)
@@ -9,8 +18,8 @@ async function createLoggedInPlayer(email: string, username: string) {
     .set('X-Eonrover-Client', '1')
     .send({ email, username, password: 'Password123' })
     .expect(201);
-  const token = await prisma.verificationToken.findFirstOrThrow({ where: { user: { email } } });
-  await request(app).post('/api/auth/verify-email').set('X-Eonrover-Client', '1').send({ token: token.token });
+  const token = verificationTokenFromMail(mockedSendMail.mock.calls, email);
+  await request(app).post('/api/auth/verify-email').set('X-Eonrover-Client', '1').send({ token });
   const login = await request(app)
     .post('/api/auth/login')
     .set('X-Eonrover-Client', '1')
