@@ -44,7 +44,6 @@ export interface BuildingDefinition {
   /** base energy consumed (positive) or produced (negative) at level 1 */
   baseEnergy: number;
   producesResource?: 'alloy' | 'heliox' | 'aether';
-  requires?: Partial<Record<BuildingKey | ResearchKey, number>>;
 }
 
 export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
@@ -77,7 +76,6 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     costGrowth: 1.6,
     baseEnergy: 18,
     producesResource: 'aether',
-    requires: { alloyMine: 5, helioxExtractor: 5 },
   },
   solarArray: {
     key: 'solarArray',
@@ -114,7 +112,6 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 800, heliox: 400, aether: 100 },
     costGrowth: 2,
     baseEnergy: 0,
-    requires: { aetherSynthesizer: 2 },
   },
   shipyard: {
     key: 'shipyard',
@@ -124,7 +121,6 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 400, heliox: 200, aether: 100 },
     costGrowth: 1.6,
     baseEnergy: 0,
-    requires: { alloyMine: 3 },
   },
   researchLab: {
     key: 'researchLab',
@@ -143,7 +139,6 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 1200, heliox: 900, aether: 500 },
     costGrowth: 1.8,
     baseEnergy: 15,
-    requires: { researchLab: 6 },
   },
 };
 

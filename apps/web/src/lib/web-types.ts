@@ -120,8 +120,15 @@ export interface BuildingCatalogItem {
     shortfall: number;
   };
   requirements: Array<{
-    key: string;
-    name: string;
+    buildingId: string;
+    buildingName: string;
+    currentLevel: number;
+    requiredLevel: number;
+    met: boolean;
+  }>;
+  unmetRequirements: Array<{
+    buildingId: string;
+    buildingName: string;
     currentLevel: number;
     requiredLevel: number;
     met: boolean;

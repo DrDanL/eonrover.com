@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { BUILDINGS, BuildingKey, projectBuildingEnergy, storageCapacity } from '@eonrover/shared';
+import {
+  BUILDINGS,
+  BuildingKey,
+  evaluateBuildingPrerequisites,
+  projectBuildingEnergy,
+  storageCapacity,
+} from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 import {
@@ -11,7 +17,6 @@ import {
 import { AppError, asyncHandler, ERROR_CODES, sendError } from '../middleware/error';
 import { completeDueBuildingConstructionsForPlanet } from '../services/buildingCompletionService';
 import { getUniverseConfig } from '../services/gameConfig';
-import { requirementsMet } from '../services/requirements';
 
 const router = Router();
 
@@ -84,8 +89,7 @@ router.get('/command-summary', asyncHandler(async (req, res) => {
   ) as Record<string, number>;
   const resourceBuildingKeys: BuildingKey[] = ['alloyMine', 'helioxExtractor', 'aetherSynthesizer'];
   const energyBlockedBuildingKeys = resourceBuildingKeys.filter((key) => {
-    const definition = BUILDINGS[key];
-    if (!requirementsMet(definition.requires, buildingLevels, {})) return false;
+    if (!evaluateBuildingPrerequisites(key, buildingLevels)?.meetsPrerequisites) return false;
     return !projectBuildingEnergy(
       buildingLevels,
       snapshot.synced.planet.solarIndex,

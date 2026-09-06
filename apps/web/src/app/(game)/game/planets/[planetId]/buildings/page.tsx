@@ -184,6 +184,19 @@ export default function BuildingsPage() {
     document.getElementById('building-category-panel')?.scrollIntoView({ block: 'nearest' });
   }
 
+  function revealPrerequisite(buildingId: string) {
+    const prerequisite = data?.catalog.find((building) => building.id === buildingId);
+    if (!prerequisite) return;
+    setActiveCategory(prerequisite.category);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const card = document.getElementById(`building-card-${buildingId}`);
+        card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        card?.focus({ preventScroll: true });
+      });
+    });
+  }
+
   function handleTabKey(event: KeyboardEvent<HTMLButtonElement>) {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     const tabList = event.currentTarget.closest('[role="tablist"]');
@@ -325,7 +338,12 @@ export default function BuildingsPage() {
                     ? resourceShortfallText(building) ?? building.unavailableReason
                     : building.unavailableReason;
                 return (
-                  <article className="panel building-card" key={building.id}>
+                  <article
+                    className={`panel building-card${building.meetsPrerequisites ? '' : ' building-card-locked'}`}
+                    id={`building-card-${building.id}`}
+                    key={building.id}
+                    tabIndex={-1}
+                  >
                     <BuildingSchematic building={building} />
                     <div className="building-card-title">
                       <div>
@@ -356,6 +374,25 @@ export default function BuildingsPage() {
                       <span className="resource-heliox">{formatNumber(building.upgradeCost.heliox)} Heliox</span>
                       <span className="resource-aether">{formatNumber(building.upgradeCost.aether)} Aether</span>
                     </div>
+                    {building.requirements.length > 0 ? (
+                      <section
+                        className={`building-prerequisites${building.meetsPrerequisites ? ' prerequisites-complete' : ' prerequisites-locked'}`}
+                        aria-label={`Prerequisites for ${building.name}`}
+                      >
+                        <h4>{building.meetsPrerequisites ? 'Prerequisites complete' : 'Prerequisites required'}</h4>
+                        <ul>
+                          {building.requirements.map((requirement) => (
+                            <li className={requirement.met ? 'prerequisite-met' : 'prerequisite-unmet'} key={requirement.buildingId}>
+                              <span className="prerequisite-status">{requirement.met ? 'Complete' : 'Not met'}</span>
+                              <button type="button" onClick={() => revealPrerequisite(requirement.buildingId)}>
+                                {requirement.buildingName} level {requirement.requiredLevel}
+                              </button>
+                              <small>Current level: {requirement.currentLevel}</small>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ) : null}
                     {unavailableText ? (
                       <p className="building-unavailable" role="status">{unavailableText}</p>
                     ) : (
@@ -373,7 +410,11 @@ export default function BuildingsPage() {
                       disabled={actionPending || !building.canConstruct}
                       aria-describedby={unavailableText ? `building-reason-${building.id}` : undefined}
                     >
-                      {busyKey === building.key ? 'Queueing...' : `Upgrade to level ${building.nextLevel}`}
+                      {busyKey === building.key
+                        ? 'Queueing...'
+                        : !building.meetsPrerequisites
+                          ? 'Locked: prerequisites required'
+                          : `Upgrade to level ${building.nextLevel}`}
                     </button>
                     {unavailableText ? (
                       <span id={`building-reason-${building.id}`} className="visually-hidden">{unavailableText}</span>

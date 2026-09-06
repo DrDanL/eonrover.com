@@ -4,12 +4,12 @@ import {
   BUILD_COMPLETION_JOB_NAME,
   BUILDING_CATEGORIES,
   BUILDINGS,
-  RESEARCH,
   BuildingKey,
   buildCompletionJobId,
   buildingCost,
   buildingDurationSeconds,
   buildingEnergy,
+  evaluateBuildingPrerequisites,
   hourlyProduction,
   planetProductionMultiplier,
   projectBuildingEnergy,
@@ -24,7 +24,6 @@ import {
   syncPlanetResources,
   withLockedPlanet,
 } from '../services/planetService';
-import { requirementsMet } from '../services/requirements';
 import { buildQueue } from '../lib/redis';
 import { AppError, asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 import { getUniverseConfig } from '../services/gameConfig';
@@ -163,6 +162,34 @@ function energyEffect(key: BuildingKey, level: number, solarIndex: number) {
   };
 }
 
+function presentPrerequisite(requirement: {
+  buildingId: BuildingKey;
+  requiredLevel: number;
+  currentLevel: number;
+  met: boolean;
+}) {
+  return {
+    buildingId: requirement.buildingId,
+    buildingName: BUILDINGS[requirement.buildingId].name,
+    requiredLevel: requirement.requiredLevel,
+    currentLevel: requirement.currentLevel,
+    met: requirement.met,
+  };
+}
+
+function presentUnmetPrerequisite(requirement: {
+  buildingId: BuildingKey;
+  requiredLevel: number;
+  currentLevel: number;
+}) {
+  return {
+    buildingId: requirement.buildingId,
+    buildingName: BUILDINGS[requirement.buildingId].name,
+    requiredLevel: requirement.requiredLevel,
+    currentLevel: requirement.currentLevel,
+  };
+}
+
 router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) {
@@ -174,32 +201,22 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const levels = Object.fromEntries(
     synced.buildings.map((building) => [building.key, building.level]),
   ) as Partial<Record<BuildingKey, number>>;
-  const [pending, research, config] = await Promise.all([
+  const [pending, config] = await Promise.all([
     prisma.buildQueueItem.findMany({
       where: { planetId: planet.id, status: 'PENDING' },
       orderBy: [{ completesAt: 'asc' }, { id: 'asc' }],
     }),
-    prisma.research.findMany({ where: { userId: req.user!.id } }),
     getUniverseConfig(),
   ]);
-  const researchLevels = Object.fromEntries(research.map((item) => [item.key, item.level]));
   const hasActiveConstruction = pending.length > 0;
   const catalog = Object.values(BUILDINGS).map((definition) => {
     const currentLevel = levels[definition.key] ?? 0;
     const nextLevel = currentLevel + 1;
     const upgradeCost = buildingCost(definition.key, nextLevel);
     const projection = projectBuildingEnergy(levels, synced.planet.solarIndex, definition.key, nextLevel);
-    const requirements = Object.entries(definition.requires ?? {}).map(([key, requiredLevel]) => {
-      const currentRequirementLevel = levels[key as BuildingKey] ?? researchLevels[key] ?? 0;
-      return {
-        key,
-        name: BUILDINGS[key as BuildingKey]?.name ?? RESEARCH[key as keyof typeof RESEARCH]?.name ?? key,
-        currentLevel: currentRequirementLevel,
-        requiredLevel: requiredLevel ?? 0,
-        met: currentRequirementLevel >= (requiredLevel ?? 0),
-      };
-    });
-    const meetsPrerequisites = requirements.every((requirement) => requirement.met);
+    const prerequisiteEvaluation = evaluateBuildingPrerequisites(definition.key, levels)!;
+    const requirements = prerequisiteEvaluation.requirements.map(presentPrerequisite);
+    const unmetRequirements = prerequisiteEvaluation.unmetRequirements.map(presentPrerequisite);
     const missingResources = {
       alloy: Math.max(0, upgradeCost.alloy - synced.planet.alloy),
       heliox: Math.max(0, upgradeCost.heliox - synced.planet.heliox),
@@ -211,11 +228,10 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     if (hasActiveConstruction) {
       unavailableReasonCode = ERROR_CODES.CONSTRUCTION_IN_PROGRESS;
       unavailableReason = 'Another building upgrade is already active.';
-    } else if (!meetsPrerequisites) {
-      unavailableReasonCode = 'PREREQUISITES_NOT_MET';
-      unavailableReason = `Requires ${requirements
-        .filter((requirement) => !requirement.met)
-        .map((requirement) => `${requirement.name} ${requirement.requiredLevel}`)
+    } else if (!prerequisiteEvaluation.meetsPrerequisites) {
+      unavailableReasonCode = ERROR_CODES.PREREQUISITES_NOT_MET;
+      unavailableReason = `Requires ${unmetRequirements
+        .map((requirement) => `${requirement.buildingName} level ${requirement.requiredLevel}`)
         .join(', ')}.`;
     } else if (!projection.energyRequirementMet) {
       unavailableReasonCode = ERROR_CODES.INSUFFICIENT_ENERGY;
@@ -265,7 +281,8 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         shortfall: projection.shortfall,
       },
       requirements,
-      meetsPrerequisites,
+      unmetRequirements,
+      meetsPrerequisites: prerequisiteEvaluation.meetsPrerequisites,
       missingResources,
       affordable,
       hasSufficientEnergy: projection.hasSufficientEnergy,
@@ -356,12 +373,13 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     const buildingLevels = Object.fromEntries(
       buildings.map((building) => [building.key, building.level]),
     ) as Partial<Record<BuildingKey, number>>;
-    const research = await tx.research.findMany({ where: { userId: ownerId } });
-    const researchLevels = Object.fromEntries(research.map((item) => [item.key, item.level]));
     const targetLevel = (buildingLevels[key] ?? 0) + 1;
-    const definition = BUILDINGS[key];
-    if (!requirementsMet(definition.requires, buildingLevels, researchLevels)) {
-      return { kind: 'requirements' as const };
+    const prerequisiteEvaluation = evaluateBuildingPrerequisites(key, buildingLevels)!;
+    if (!prerequisiteEvaluation.meetsPrerequisites) {
+      return {
+        kind: 'requirements' as const,
+        requirements: prerequisiteEvaluation.unmetRequirements.map(presentUnmetPrerequisite),
+      };
     }
 
     const energy = projectBuildingEnergy(buildingLevels, lockedPlanet.solarIndex, key, targetLevel);
@@ -432,7 +450,13 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     return;
   }
   if (outcome.kind === 'requirements') {
-    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requirements not met');
+    sendError(
+      res,
+      409,
+      ERROR_CODES.PREREQUISITES_NOT_MET,
+      'Building prerequisites have not been met.',
+      { requirements: outcome.requirements },
+    );
     return;
   }
   if (outcome.kind === 'insufficient-energy') {

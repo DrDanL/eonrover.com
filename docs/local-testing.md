@@ -247,6 +247,44 @@ projected only from the last server timestamp/rates and stop at the displayed st
 - Research, Shipyard and Fleet are labelled **Coming later** in the shell because their existing
   prototype routes do not yet meet the trusted queue/effect/recovery standard.
 
+### Building prerequisite checks
+
+Building progression is enforced by the API from persisted, completed building levels. A pending
+upgrade does not count, browser-supplied levels are ignored, and meeting the exact required level
+unlocks the dependent building. The Stage 5C1 progression table is:
+
+| Building | Completed building levels required |
+| --- | --- |
+| Alloy Mine | None |
+| Heliox Extractor | None |
+| Aether Synthesizer | None |
+| Solar Array | None |
+| Alloy Depot | Alloy Mine 2 |
+| Heliox Tank | Heliox Extractor 2 |
+| Aether Vault | Aether Synthesizer 2 |
+| Research Lab | Aether Synthesizer 1; Solar Array 2 |
+| Shipyard | Alloy Mine 2; Heliox Extractor 1; Solar Array 2 |
+| Gate Observatory | Research Lab 3; Aether Synthesizer 2; Solar Array 4 |
+
+The progression keeps core resource and energy production available immediately. Storage follows
+development of its matching resource, advanced infrastructure requires an operating economy and
+energy base, and Eon Gate infrastructure is deliberately a later planetary objective.
+
+On a fresh homeworld, confirm that Alloy Mine, Heliox Extractor, Aether Synthesizer and Solar Array
+have no prerequisite lock. Storage and Infrastructure cards show every requirement, required level,
+current completed level, and explicit **Complete** or **Not met** text. Selecting a prerequisite name
+switches to its category, scrolls its building card into view and moves keyboard focus there.
+
+Attempting a locked start returns HTTP 409 with code `PREREQUISITES_NOT_MET` and an ordered
+`details.requirements` list containing every unmet building ID/name plus required and current levels.
+That rejection must not alter resources, `lastProductionAt`, completed levels, the queue, or Redis
+jobs. When several restrictions apply, the displayed/API availability priority is active
+construction, prerequisites, energy, then resources. Complete the required buildings and refresh to
+confirm the lock disappears; a full volume-preserving restart must derive the same eligibility from
+the persisted completed levels.
+
+Field-capacity limits are intentionally not part of Stage 5C1 and remain deferred to Stage 5C2.
+
 ## 7. Testing email verification and account recovery
 
 1. **Successful delivery:** register a unique account and check that one verification message

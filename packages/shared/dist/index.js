@@ -18,4 +18,5 @@ __exportStar(require("./types"), exports);
 __exportStar(require("./constants"), exports);
 __exportStar(require("./formulas"), exports);
 __exportStar(require("./buildingCompletion"), exports);
+__exportStar(require("./buildingPrerequisites"), exports);
 __exportStar(require("./gamePresentation"), exports);

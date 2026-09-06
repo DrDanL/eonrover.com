@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { buildCompletionJobId, buildingCost, buildingDurationSeconds } from '@eonrover/shared';
+import { BuildingKey, buildCompletionJobId, buildingCost, buildingDurationSeconds } from '@eonrover/shared';
 import { createApp } from '../app';
 import { SESSION_COOKIE, sessionTokenDigest } from '../lib/auth';
 import { prisma } from '../lib/prisma';
@@ -119,23 +119,27 @@ function cancelConstruction(cookie: string, planetId: string, queueItemId: strin
 async function createPendingConstruction(
   planetId: string,
   overrides: Partial<{
+    buildingKey: BuildingKey;
+    targetLevel: number;
     costAlloy: number;
     costHeliox: number;
     costAether: number;
     status: 'PENDING' | 'COMPLETE' | 'CANCELLED';
     jobId: string | null;
+    startedAt: Date;
+    completesAt: Date;
   }> = {},
 ) {
   return prisma.buildQueueItem.create({
     data: {
       planetId,
-      buildingKey: 'alloyMine',
-      targetLevel: 1,
+      buildingKey: overrides.buildingKey ?? 'alloyMine',
+      targetLevel: overrides.targetLevel ?? 1,
       costAlloy: overrides.costAlloy ?? 60,
       costHeliox: overrides.costHeliox ?? 15,
       costAether: overrides.costAether ?? 0,
-      startedAt: NOW,
-      completesAt: new Date(NOW.getTime() + 60_000),
+      startedAt: overrides.startedAt ?? NOW,
+      completesAt: overrides.completesAt ?? new Date(NOW.getTime() + 60_000),
       status: overrides.status ?? 'PENDING',
       jobId: overrides.jobId === undefined ? 'building-test-job' : overrides.jobId,
     },
@@ -245,6 +249,146 @@ describe('atomic building construction start', () => {
     });
   });
 
+  it('allows a dependent building when its completed prerequisite level is sufficient', async () => {
+    const { user, cookie } = await createPlayer('unlocked-storage@example.com', 'unlocked-storage');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 2 });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'alloyStorage' }).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'alloyStorage', targetLevel: 1 });
+    expect(addJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns prerequisite details without deducting, synchronising, queueing, or scheduling', async () => {
+    const { user, cookie } = await createPlayer('locked-storage@example.com', 'locked-storage');
+    const previousProductionAt = new Date(NOW.getTime() - 3_600_000);
+    const planet = await createPlanet({
+      ownerId: user.id,
+      alloy: 900,
+      heliox: 800,
+      aether: 700,
+      alloyMineLevel: 1,
+      lastProductionAt: previousProductionAt,
+    });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'alloyStorage' }).expect(409);
+
+    expect(response.body).toEqual({
+      error: 'Building prerequisites have not been met.',
+      code: 'PREREQUISITES_NOT_MET',
+      details: {
+        requirements: [
+          {
+            buildingId: 'alloyMine',
+            buildingName: 'Alloy Mine',
+            requiredLevel: 2,
+            currentLevel: 1,
+          },
+        ],
+      },
+    });
+    const persisted = await prisma.planet.findUniqueOrThrow({ where: { id: planet.id } });
+    expect(persisted).toMatchObject({
+      alloy: 900,
+      heliox: 800,
+      aether: 700,
+      lastProductionAt: previousProductionAt,
+    });
+    expect(
+      (await prisma.building.findUniqueOrThrow({
+        where: { planetId_key: { planetId: planet.id, key: 'alloyMine' } },
+      })).level,
+    ).toBe(1);
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('returns every missing prerequisite in deterministic order with current levels', async () => {
+    const { user, cookie } = await createPlayer('gate-prerequisites@example.com', 'gate-prerequisites');
+    const planet = await createPlanet({
+      ownerId: user.id,
+      alloy: 1_000,
+      heliox: 1_000,
+      aether: 0,
+      alloyMineLevel: 2,
+      helioxExtractorLevel: 1,
+      aetherSynthesizerLevel: 1,
+      solarArrayLevel: 0,
+    });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'gateObservatory' }).expect(409);
+
+    expect(response.body.details.requirements).toEqual([
+      { buildingId: 'researchLab', buildingName: 'Research Lab', requiredLevel: 3, currentLevel: 0 },
+      { buildingId: 'aetherSynthesizer', buildingName: 'Aether Synthesizer', requiredLevel: 2, currentLevel: 1 },
+      { buildingId: 'solarArray', buildingName: 'Solar Array', requiredLevel: 4, currentLevel: 0 },
+    ]);
+  });
+
+  it('ignores client-supplied prerequisite levels and locks a legacy building upgrade', async () => {
+    const { user, cookie } = await createPlayer('legacy-prerequisites@example.com', 'legacy-prerequisites');
+    const planet = await createPlanet({
+      ownerId: user.id,
+      researchLabLevel: 2,
+      aetherSynthesizerLevel: 0,
+      solarArrayLevel: 1,
+    });
+
+    const response = await startConstruction(cookie, planet.id, {
+      key: 'researchLab',
+      completedBuildingLevels: { aetherSynthesizer: 99, solarArray: 99 },
+      prerequisitesMet: true,
+    }).expect(409);
+
+    expect(response.body.code).toBe('PREREQUISITES_NOT_MET');
+    expect(response.body.details.requirements).toEqual([
+      { buildingId: 'aetherSynthesizer', buildingName: 'Aether Synthesizer', requiredLevel: 1, currentLevel: 0 },
+      { buildingId: 'solarArray', buildingName: 'Solar Array', requiredLevel: 2, currentLevel: 1 },
+    ]);
+    expect(
+      (await prisma.building.findUniqueOrThrow({
+        where: { planetId_key: { planetId: planet.id, key: 'researchLab' } },
+      })).level,
+    ).toBe(2);
+  });
+
+  it('does not allow concurrent requests to bypass a prerequisite', async () => {
+    const { user, cookie } = await createPlayer('concurrent-prerequisites@example.com', 'concurrent-prerequisites');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 1 });
+
+    const responses = await Promise.all([
+      startConstruction(cookie, planet.id, { key: 'alloyStorage' }),
+      startConstruction(cookie, planet.id, { key: 'alloyStorage' }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([409, 409]);
+    expect(responses.every((response) => response.body.code === 'PREREQUISITES_NOT_MET')).toBe(true);
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('settles an overdue prerequisite upgrade before allowing its dependent building', async () => {
+    const { user, cookie } = await createPlayer('overdue-prerequisite@example.com', 'overdue-prerequisite');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 1 });
+    const prerequisite = await createPendingConstruction(planet.id, {
+      buildingKey: 'alloyMine',
+      targetLevel: 2,
+      startedAt: new Date(NOW.getTime() - 120_000),
+      completesAt: new Date(NOW.getTime() - 60_000),
+      jobId: null,
+    });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'alloyStorage' }).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'alloyStorage', targetLevel: 1 });
+    expect((await prisma.buildQueueItem.findUniqueOrThrow({ where: { id: prerequisite.id } })).status).toBe('COMPLETE');
+    expect(
+      (await prisma.building.findUniqueOrThrow({
+        where: { planetId_key: { planetId: planet.id, key: 'alloyMine' } },
+      })).level,
+    ).toBe(2);
+  });
+
   it('allows an upgrade within available energy capacity', async () => {
     const { user, cookie } = await createPlayer('capacity-builder@example.com', 'capacity-builder');
     const planet = await createPlanet({ ownerId: user.id, solarArrayLevel: 1 });
@@ -310,13 +454,13 @@ describe('atomic building construction start', () => {
     expect(response.body.queueItem).toMatchObject({ buildingKey: 'solarArray', targetLevel: 1 });
   });
 
-  it('allows a zero-demand facility during an existing deficit', async () => {
+  it('allows a prerequisite-eligible zero-demand facility during an existing deficit', async () => {
     const { user, cookie } = await createPlayer('deficit-facility@example.com', 'deficit-facility');
     const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 3, solarArrayLevel: 0 });
 
-    const response = await startConstruction(cookie, planet.id, { key: 'researchLab' }).expect(201);
+    const response = await startConstruction(cookie, planet.id, { key: 'alloyStorage' }).expect(201);
 
-    expect(response.body.queueItem).toMatchObject({ buildingKey: 'researchLab', targetLevel: 1 });
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'alloyStorage', targetLevel: 1 });
   });
 
   it('ignores client-supplied energy totals and projections', async () => {

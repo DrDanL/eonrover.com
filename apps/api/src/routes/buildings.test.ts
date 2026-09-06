@@ -80,6 +80,33 @@ describe('buildings queue', () => {
       affordable: true,
       canConstruct: false,
       unavailableReasonCode: 'CONSTRUCTION_IN_PROGRESS',
+      requirements: [],
+      unmetRequirements: [],
+      meetsPrerequisites: true,
+    });
+    expect(response.body.catalog.find((building: { key: string }) => building.key === 'alloyStorage')).toMatchObject({
+      canConstruct: false,
+      unavailableReasonCode: 'CONSTRUCTION_IN_PROGRESS',
+      unavailableReason: 'Another building upgrade is already active.',
+      meetsPrerequisites: false,
+      requirements: [
+        {
+          buildingId: 'alloyMine',
+          buildingName: 'Alloy Mine',
+          requiredLevel: 2,
+          currentLevel: 0,
+          met: false,
+        },
+      ],
+      unmetRequirements: [
+        {
+          buildingId: 'alloyMine',
+          buildingName: 'Alloy Mine',
+          requiredLevel: 2,
+          currentLevel: 0,
+          met: false,
+        },
+      ],
     });
     expect(response.body.catalog[0]).not.toHaveProperty('baseCost');
     expect(response.body.catalog[0]).not.toHaveProperty('costGrowth');
@@ -95,15 +122,33 @@ describe('buildings queue', () => {
     expect(response.body.queue[0]).not.toHaveProperty('jobId');
   });
 
-  it('rejects a building whose prerequisites are not met', async () => {
+  it('presents and rejects a building whose prerequisites are not met', async () => {
     const { cookie, planet } = await createLoggedInPlayer('rookie@example.com', 'rookie1');
 
-    await request(app)
+    const catalog = await request(app)
+      .get(`/api/planets/${planet.id}/buildings`)
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(catalog.body.catalog.find((building: { key: string }) => building.key === 'gateObservatory')).toMatchObject({
+      meetsPrerequisites: false,
+      canConstruct: false,
+      unavailableReasonCode: 'PREREQUISITES_NOT_MET',
+      unavailableReason: 'Requires Research Lab level 3, Aether Synthesizer level 2, Solar Array level 4.',
+      requirements: [
+        { buildingId: 'researchLab', buildingName: 'Research Lab', requiredLevel: 3, currentLevel: 0, met: false },
+        { buildingId: 'aetherSynthesizer', buildingName: 'Aether Synthesizer', requiredLevel: 2, currentLevel: 0, met: false },
+        { buildingId: 'solarArray', buildingName: 'Solar Array', requiredLevel: 4, currentLevel: 1, met: false },
+      ],
+    });
+
+    const response = await request(app)
       .post(`/api/planets/${planet.id}/buildings`)
       .set('Cookie', cookie)
       .set('X-Eonrover-Client', '1')
-      .send({ key: 'aetherSynthesizer' })
+      .send({ key: 'alloyStorage' })
       .expect(409);
+
+    expect(response.body.code).toBe('PREREQUISITES_NOT_MET');
   });
 
   it('rejects an upgrade the planet cannot afford', async () => {

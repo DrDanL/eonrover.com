@@ -18,7 +18,6 @@ export interface BuildingDefinition {
     /** base energy consumed (positive) or produced (negative) at level 1 */
     baseEnergy: number;
     producesResource?: 'alloy' | 'heliox' | 'aether';
-    requires?: Partial<Record<BuildingKey | ResearchKey, number>>;
 }
 export declare const BUILDINGS: Record<BuildingKey, BuildingDefinition>;
 export interface ResearchDefinition {

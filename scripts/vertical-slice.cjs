@@ -509,6 +509,82 @@ async function runWorkflow(urls, credentials) {
   expect(storedSession.id === sessionDigest(session.rawToken), 'PostgreSQL did not store the session-token digest.');
   expect(storedSession.id !== session.rawToken, 'PostgreSQL stored a raw bearer session token.');
 
+  step('Rejecting a locked building with authoritative prerequisite guidance and no side effects.');
+  const initialBuildings = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, {
+    cookie: session.pair,
+  });
+  const alloyDepot = initialBuildings.body?.catalog?.find((building) => building.id === 'alloyStorage');
+  expect(alloyDepot?.meetsPrerequisites === false, 'A fresh homeworld unexpectedly unlocked the Alloy Depot.');
+  assert.deepEqual(
+    alloyDepot?.unmetRequirements,
+    [
+      {
+        buildingId: 'alloyMine',
+        buildingName: 'Alloy Mine',
+        requiredLevel: 2,
+        currentLevel: 0,
+        met: false,
+      },
+    ],
+    'The building catalog did not return the expected prerequisite guidance.',
+  );
+  const beforeLockedAttempt = queryJson(`
+    SELECT json_build_object(
+      'alloy', planet."alloy",
+      'heliox', planet."heliox",
+      'aether', planet."aether",
+      'lastProductionAt', planet."lastProductionAt",
+      'pendingCount', (
+        SELECT COUNT(*)::int FROM "BuildQueueItem"
+        WHERE "planetId" = ${sqlLiteral(planetId)} AND "status" = 'PENDING'
+      )
+    )
+    FROM "Planet" planet
+    WHERE planet."id" = ${sqlLiteral(planetId)}
+  `);
+  const lockedAttempt = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, {
+    method: 'POST',
+    expectedStatus: 409,
+    cookie: session.pair,
+    body: { key: 'alloyStorage' },
+  });
+  expect(
+    lockedAttempt.body?.error === 'Building prerequisites have not been met.' &&
+      lockedAttempt.body?.code === 'PREREQUISITES_NOT_MET',
+    'A locked building did not return the stable prerequisite error contract.',
+  );
+  assert.deepEqual(
+    lockedAttempt.body?.details?.requirements,
+    [
+      {
+        buildingId: 'alloyMine',
+        buildingName: 'Alloy Mine',
+        requiredLevel: 2,
+        currentLevel: 0,
+      },
+    ],
+    'The locked building rejection did not report every unmet prerequisite.',
+  );
+  const afterLockedAttempt = queryJson(`
+    SELECT json_build_object(
+      'alloy', planet."alloy",
+      'heliox', planet."heliox",
+      'aether', planet."aether",
+      'lastProductionAt', planet."lastProductionAt",
+      'pendingCount', (
+        SELECT COUNT(*)::int FROM "BuildQueueItem"
+        WHERE "planetId" = ${sqlLiteral(planetId)} AND "status" = 'PENDING'
+      )
+    )
+    FROM "Planet" planet
+    WHERE planet."id" = ${sqlLiteral(planetId)}
+  `);
+  assert.deepEqual(
+    afterLockedAttempt,
+    beforeLockedAttempt,
+    'The locked building attempt changed resources, production time, or the construction queue.',
+  );
+
   step('Starting one Alloy Mine upgrade and checking deduction and queue exclusivity.');
   const beforeBuild = await apiRequest(apiUrl, `/api/planets/${planetId}`, { cookie: session.pair });
   const beforeAlloy = beforeBuild.body.planet.alloy;

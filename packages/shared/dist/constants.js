@@ -48,7 +48,6 @@ exports.BUILDINGS = {
         costGrowth: 1.6,
         baseEnergy: 18,
         producesResource: 'aether',
-        requires: { alloyMine: 5, helioxExtractor: 5 },
     },
     solarArray: {
         key: 'solarArray',
@@ -85,7 +84,6 @@ exports.BUILDINGS = {
         baseCost: { alloy: 800, heliox: 400, aether: 100 },
         costGrowth: 2,
         baseEnergy: 0,
-        requires: { aetherSynthesizer: 2 },
     },
     shipyard: {
         key: 'shipyard',
@@ -95,7 +93,6 @@ exports.BUILDINGS = {
         baseCost: { alloy: 400, heliox: 200, aether: 100 },
         costGrowth: 1.6,
         baseEnergy: 0,
-        requires: { alloyMine: 3 },
     },
     researchLab: {
         key: 'researchLab',
@@ -114,7 +111,6 @@ exports.BUILDINGS = {
         baseCost: { alloy: 1200, heliox: 900, aether: 500 },
         costGrowth: 1.8,
         baseEnergy: 15,
-        requires: { researchLab: 6 },
     },
 };
 exports.RESEARCH = {
