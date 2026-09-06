@@ -186,6 +186,9 @@ router.post('/', asyncHandler(async (req, res) => {
       break;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034' && attempt + 1 < START_TRANSACTION_ATTEMPTS) continue;
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new AppError(409, ERROR_CODES.RESEARCH_IN_PROGRESS, 'Another research item is already active.');
+      }
       throw error;
     }
   }
