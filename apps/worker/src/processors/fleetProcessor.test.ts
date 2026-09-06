@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
 import { DEFAULT_PLANET_FIELD_CAPACITY } from '@eonrover/shared';
 import { prisma } from '../prisma';
-import { processFleetJob } from './fleetProcessor';
+import { processFleetJob, techBonus } from './fleetProcessor';
 
 async function createUser(email: string, username: string) {
   return prisma.user.create({
@@ -38,6 +38,36 @@ function fakeJob(missionId: string, name: string): Job<{ missionId: string }> {
 }
 
 describe('fleetProcessor', () => {
+  it('uses each ACTIVE combat research level in the authoritative combat multiplier', async () => {
+    const player = await createUser('combat-research@example.com', 'combat-research');
+    await Promise.all([
+      prisma.research.create({ data: { userId: player.id, key: 'weaponTech', level: 3 } }),
+      prisma.research.create({ data: { userId: player.id, key: 'shieldTech', level: 2 } }),
+      prisma.research.create({ data: { userId: player.id, key: 'armourTech', level: 1 } }),
+    ]);
+    await expect(techBonus(player.id, 'weaponTech')).resolves.toBeCloseTo(1.3);
+    await expect(techBonus(player.id, 'shieldTech')).resolves.toBeCloseTo(1.2);
+    await expect(techBonus(player.id, 'armourTech')).resolves.toBeCloseTo(1.1);
+  });
+
+  it('uses ACTIVE Espionage Technology levels when producing an espionage report', async () => {
+    const attacker = await createUser('spy-attacker@example.com', 'spy-attacker');
+    const defender = await createUser('spy-defender@example.com', 'spy-defender');
+    const origin = await createPlanet(attacker.id, 9, 1, 1);
+    const target = await createPlanet(defender.id, 9, 1, 2);
+    await Promise.all([
+      prisma.research.create({ data: { userId: attacker.id, key: 'espionageTech', level: 4 } }),
+      prisma.research.create({ data: { userId: defender.id, key: 'espionageTech', level: 1 } }),
+    ]);
+    const mission = await prisma.fleetMission.create({ data: {
+      originId: origin.id, targetId: target.id, targetGalaxy: target.galaxy, targetSystem: target.system, targetSlot: target.slot,
+      missionType: 'ESPIONAGE', ships: { probe: 1 }, cargo: { alloy: 0, heliox: 0, aether: 0 }, arrivesAt: new Date(),
+    } });
+    await processFleetJob(fakeJob(mission.id, 'fleet-arrive'));
+    const report = await prisma.espionageReport.findFirstOrThrow({ where: { missionId: mission.id } });
+    expect(report.accuracy).toBeCloseTo(0.74);
+  });
+
   it('TRANSPORT delivers cargo to the target planet and schedules the return leg', async () => {
     const attacker = await createUser('transporter@example.com', 'transporter');
     const defender = await createUser('receiver@example.com', 'receiver');

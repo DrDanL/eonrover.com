@@ -22,6 +22,7 @@ exports.fuelConsumption = fuelConsumption;
 exports.resolveCombat = resolveCombat;
 exports.espionageAccuracy = espionageAccuracy;
 const constants_1 = require("./constants");
+const researchCatalogue_1 = require("./researchCatalogue");
 /**
  * Cost of a building/research/ship at a given target level.
  * cost(level) = baseCost * growth^(level - 1)
@@ -39,8 +40,7 @@ function buildingCost(key, targetLevel) {
     return scaledCost(def.baseCost, def.costGrowth, targetLevel);
 }
 function researchCost(key, targetLevel) {
-    const def = constants_1.RESEARCH[key];
-    return scaledCost(def.baseCost, def.costGrowth, targetLevel);
+    return (0, researchCatalogue_1.researchCostForLevel)(key, targetLevel);
 }
 /**
  * Construction duration for a building level, in seconds, given the total
@@ -57,7 +57,7 @@ function buildingDurationSeconds(cost, researchLabLevel, economySpeed) {
  * Research duration in seconds, slower than buildings and accelerated by lab level.
  */
 function researchDurationSeconds(cost, researchLabLevel, researchSpeed) {
-    const raw = (cost.alloy + cost.heliox + cost.aether * 2) / (1000 * (1 + researchLabLevel));
+    const raw = (cost.alloy + cost.heliox + cost.aether * 2) / (1000 * (1 + Math.max(0, researchLabLevel)));
     const scaled = raw / Math.max(researchSpeed, 0.01);
     return Math.max(Math.round(scaled * 3600), 30);
 }

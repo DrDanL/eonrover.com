@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GATE_ACTIVATION_REQUIREMENTS = exports.GATE_TRAVEL_SECONDS = exports.GATE_ACTIVATION_FRAGMENTS = exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = exports.BUILDING_CATEGORIES = void 0;
+const researchCatalogue_1 = require("./researchCatalogue");
 exports.BUILDING_CATEGORIES = [
     {
         key: 'resources',
@@ -123,80 +124,18 @@ exports.BUILDINGS = {
         fieldCost: 1,
     },
 };
-exports.RESEARCH = {
-    alloyProcessing: {
-        key: 'alloyProcessing',
-        name: 'Alloy Processing',
-        description: 'Improves Alloy Mine yield.',
-        baseCost: { alloy: 200, heliox: 100, aether: 0 },
-        costGrowth: 1.6,
-        requires: { researchLab: 1 },
+/** @deprecated Use RESEARCH_CATALOGUE/RESEARCH_BY_ID for new code. */
+exports.RESEARCH = Object.fromEntries(Object.values(researchCatalogue_1.RESEARCH_BY_ID).map((entry) => [
+    entry.id,
+    {
+        key: entry.id,
+        name: entry.name,
+        description: entry.description,
+        baseCost: entry.baseCost,
+        costGrowth: entry.costGrowth,
+        requires: Object.fromEntries(entry.requirements.map((requirement) => [requirement.id, requirement.level])),
     },
-    helioxCombustion: {
-        key: 'helioxCombustion',
-        name: 'Heliox Combustion',
-        description: 'Improves Heliox Extractor yield and ship fuel efficiency.',
-        baseCost: { alloy: 150, heliox: 200, aether: 0 },
-        costGrowth: 1.6,
-        requires: { researchLab: 1 },
-    },
-    aetherPhysics: {
-        key: 'aetherPhysics',
-        name: 'Aether Physics',
-        description: 'Improves Aether Synthesizer yield and unlocks advanced research.',
-        baseCost: { alloy: 300, heliox: 300, aether: 50 },
-        costGrowth: 1.7,
-        requires: { researchLab: 4, aetherSynthesizer: 1 },
-    },
-    propulsionTheory: {
-        key: 'propulsionTheory',
-        name: 'Propulsion Theory',
-        description: 'Increases fleet cruise speed.',
-        baseCost: { alloy: 300, heliox: 200, aether: 20 },
-        costGrowth: 1.6,
-        requires: { researchLab: 2 },
-    },
-    espionageTech: {
-        key: 'espionageTech',
-        name: 'Espionage Technology',
-        description: 'Increases the accuracy of espionage reports and counter-intel.',
-        baseCost: { alloy: 200, heliox: 400, aether: 20 },
-        costGrowth: 1.6,
-        requires: { researchLab: 3 },
-    },
-    shieldTech: {
-        key: 'shieldTech',
-        name: 'Shield Technology',
-        description: 'Increases ship and defence shield strength.',
-        baseCost: { alloy: 300, heliox: 300, aether: 40 },
-        costGrowth: 1.7,
-        requires: { researchLab: 4 },
-    },
-    weaponTech: {
-        key: 'weaponTech',
-        name: 'Weapon Technology',
-        description: 'Increases ship and defence weapon damage.',
-        baseCost: { alloy: 300, heliox: 300, aether: 40 },
-        costGrowth: 1.7,
-        requires: { researchLab: 4 },
-    },
-    armourTech: {
-        key: 'armourTech',
-        name: 'Armour Technology',
-        description: 'Increases ship and defence hull integrity.',
-        baseCost: { alloy: 300, heliox: 300, aether: 40 },
-        costGrowth: 1.7,
-        requires: { researchLab: 4 },
-    },
-    gateTheory: {
-        key: 'gateTheory',
-        name: 'Gate Theory',
-        description: 'Allows analysis of Eon Gate fragments and, eventually, gate activation.',
-        baseCost: { alloy: 1000, heliox: 1000, aether: 400 },
-        costGrowth: 1.8,
-        requires: { aetherPhysics: 3, gateObservatory: 1 },
-    },
-};
+]));
 exports.SHIPS = {
     scout: {
         key: 'scout',

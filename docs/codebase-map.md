@@ -2,7 +2,7 @@
 
 ## Scope and inspection record
 
-This document was refreshed for the Stage 5C2 planetary-field-capacity milestone on 2026-09-06. Areas outside the trusted slice retain the original 2026-09-04 prototype assessment unless explicitly updated below.
+This document was refreshed for the Stage 6A research-catalogue audit on 2026-09-06. Areas outside the trusted slice retain the original 2026-09-04 prototype assessment unless explicitly updated below.
 
 - No `AGENTS.md` exists in this repository.
 - Stage 0 destructive test guards require `TEST_DATABASE_URL`, `ALLOW_TEST_DATABASE_RESET=1`, and a test-named database before cleanup can run.
@@ -12,6 +12,7 @@ This document was refreshed for the Stage 5C2 planetary-field-capacity milestone
 - Stage 5B adds one allowlisted command snapshot and a responsive authenticated shell with live presentation-only resources, owned-planet switching, global construction state, and a command-focused overview.
 - Stage 5C1 centralises building-only prerequisites, gates starts from persisted completed levels inside the planet lock, and exposes ordered cross-category lock guidance without adding field capacity.
 - Stage 5C2 persists a positive planet capacity, derives completed/reserved use from authoritative rows, blocks over-capacity starts inside the planet lock, and presents defensive full/legacy-over-capacity states without adding expansion gameplay.
+- Stage 6A centralises all persisted research definitions in a typed shared catalogue and exposes an authenticated, selected-owned-planet read-only catalogue with honest effect status. Research scheduling remains prototype-only and unavailable in the player UI.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 
@@ -35,7 +36,7 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Resource production and storage | Implemented for the trusted slice | `syncPlanetResources` advances elapsed server-time production under a per-planet PostgreSQL row lock, persists fractional balances/timestamps, applies energy and production storage caps, and prevents duplicate accrual under concurrent reads/spends. Research bonuses and non-production delivery/loot storage policy remain outside the slice. |
 | Buildings and construction queues | Implemented for the trusted slice | One active building item per planet is enforced. Start derives ordered prerequisites and completed field use from persisted building levels, reserves accepted pending work from authoritative queue rows, checks fields and then projected energy under the planet lock before settlement/deduction, and never trusts browser-supplied totals. The allowlisted API and categorised web interface expose complete requirements, current levels, costs, field/energy projections, availability priority, countdown and refund information without internal job IDs. General ordered multi-item queues remain future work. |
 | Energy production and consumption | Implemented for the trusted building slice | One shared pure model calculates supply, demand, available capacity, utilisation, production efficiency and upgrade projections. Demand-increasing starts are blocked only above capacity; exact capacity is accepted, while generators and zero-demand facilities remain buildable in legacy deficits. Allocation controls and history remain future work. |
-| Research and technology progression | Partially implemented | Account-wide levels, requirements, costs, one active queue, timed completion, and a UI exist. Several stated technology effects are disconnected and completion is not recoverable/idempotent enough. |
+| Research and technology progression | Partially implemented | A central, typed and deterministic catalogue audits all nine persisted technologies and accurately marks active, partial, and planned effects. An authenticated selected-planet read model displays account-wide levels, local lab/resource context, and legacy active work without identifiers. Scheduling/completion remains an unsafe prototype and is deliberately unavailable in the player UI. |
 | Shipyard and fleet construction | Partially implemented | Ships and defences can be queued and completed one unit at a time. Multiple batches run in parallel, retry windows can duplicate units, and there is no cancellation or reconciliation. |
 | Galaxy and solar-system navigation | Partially implemented | A protected galaxy browser renders 12 slots from live data. Query/mission coordinates have no configured upper bounds, and the screen does not launch context-aware missions. |
 | Fleet missions and travel | Partially implemented | Dispatch, fuel, cargo, travel duration, recall, arrival, return, and gate travel are connected. Mission-specific rules, concurrency, recall races, idempotency, and recovery are incomplete. |
@@ -205,7 +206,7 @@ All are beneath the client-guarded layout in `apps/web/src/app/(game)/game/layou
 | `/game` | Resolves the persisted owned-planet selection and redirects to its overview; shows explicit no-planet and command-failure states. |
 | `/game/planets/[planetId]` | Command overview driven by the shell snapshot: identity, projected economy display, storage timing/warnings, distinct field and energy capacity, building levels, construction, and deterministic next action. |
 | `/game/planets/[planetId]/buildings` | Field and energy summaries, categorised authoritative building catalog, eligibility reasons, single active construction/refund details, auto-refresh at completion, enqueue and cancel. |
-| `/game/planets/[planetId]/research` | Account research catalog and enqueue funded from route planet. |
+| `/game/planets/[planetId]/research` | Read-only account-wide research catalogue using the selected owned planet for its laboratory and resource context; scheduling is unavailable. |
 | `/game/planets/[planetId]/shipyard` | Ship/defence catalog and batch enqueue. |
 | `/game/planets/[planetId]/fleet` | Generic form for every mission, all account missions, and recall. |
 | `/game/galaxy` | Live 12-slot system browser. |
@@ -258,7 +259,7 @@ All mutating requests pass the global custom-header check in `requireCsrfHeader`
 | `GET /api/planets/:planetId/buildings` | Owning player | Connected; settles due completion/production and returns allowlisted field/energy/category metadata, authoritative balances/rates/storage, every ordered prerequisite, per-building field and energy projections/eligibility, and public active-construction data without queue job IDs. Availability priority is active construction, prerequisites, fields, energy, then resources. |
 | `POST /api/planets/:planetId/buildings` | Owning player | Connected; after due completion and under a planet lock, recomputes authoritative completed levels, rejects missing prerequisites, blocks projected field use above persisted capacity with `PLANET_FIELDS_FULL`, and then blocks demand-increasing upgrades above energy supply—all before resource settlement/deduction/row creation/scheduling. It then enforces resources and atomically snapshots accepted cost. |
 | `DELETE /api/planets/:planetId/buildings/:queueItemId` | Owning player | Connected; serializes against completion, atomically cancels and refunds 50% of the stored accepted cost, then removes Redis work best-effort. |
-| `GET /api/research` | Player | Connected; account-wide catalog and pending job. |
+| `GET /api/research?planetId=...` | Owning player | Connected read-only catalogue; settles the selected planet's due building/resources, returns allowlisted account levels, local lab/resources, deterministic technology entries, and an identifier-free active-work summary. |
 | `POST /api/research` | Player owning funding planet | Connected; checks one active research, requirements/resources, deducts, records, schedules. |
 | `GET /api/planets/:planetId/shipyard` | Owning player | Connected; catalog, counts, pending batches. |
 | `POST /api/planets/:planetId/shipyard` | Owning player | Connected; requirements/resources, batch record, first-unit job. Multiple batches are unintentionally parallel. |

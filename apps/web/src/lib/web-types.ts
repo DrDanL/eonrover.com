@@ -249,12 +249,30 @@ export interface PresentedBuildQueueItem {
 }
 
 export interface ResearchCatalogItem {
-  key: string;
+  id: string;
   name: string;
   description: string;
-  level: number;
-  nextCost: ResourceAmounts;
-  requires?: Record<string, number>;
+  category: string;
+  displayOrder: number;
+  currentLevel: number;
+  nextLevel: number;
+  cost: ResourceAmounts;
+  durationSeconds: number;
+  requirements: Array<{ type: 'building' | 'research'; id: string; name: string; requiredLevel: number; currentLevel: number; met: boolean }>;
+  unmetRequirements: Array<{ type: 'building' | 'research'; id: string; name: string; requiredLevel: number; currentLevel: number; met: boolean }>;
+  meetsRequirements: boolean;
+  affordable: boolean;
+  effect: { description: string; status: 'ACTIVE' | 'PARTIAL' | 'PLANNED' };
+  scheduling: { available: false; reason: string };
+}
+
+export interface ResearchCatalogueResponse {
+  generatedAt: string;
+  selectedPlanet: { id: string; name: string; researchLabLevel: number; resources: ResourceAmounts };
+  accountResearchLevels: Record<string, number>;
+  categories: Array<{ id: string; name: string; displayOrder: number }>;
+  catalog: ResearchCatalogItem[];
+  activeResearch: { id: string; name: string; targetLevel: number; startedAt: string; completesAt: string; status: string } | null;
 }
 
 export interface ShipyardCatalogItem {

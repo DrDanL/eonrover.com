@@ -30,6 +30,7 @@ export interface ResearchDefinition {
     costGrowth: number;
     requires?: Partial<Record<BuildingKey | ResearchKey, number>>;
 }
+/** @deprecated Use RESEARCH_CATALOGUE/RESEARCH_BY_ID for new code. */
 export declare const RESEARCH: Record<ResearchKey, ResearchDefinition>;
 export interface ShipDefinition {
     key: ShipKey;

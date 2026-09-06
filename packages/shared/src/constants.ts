@@ -7,6 +7,7 @@ import {
   ResourceAmounts,
   ShipKey,
 } from './types';
+import { RESEARCH_BY_ID, ResearchCatalogueEntry } from './researchCatalogue';
 
 export const BUILDING_CATEGORIES: ReadonlyArray<{
   key: BuildingCategory;
@@ -163,6 +164,22 @@ export interface ResearchDefinition {
   requires?: Partial<Record<BuildingKey | ResearchKey, number>>;
 }
 
+/** @deprecated Use RESEARCH_CATALOGUE/RESEARCH_BY_ID for new code. */
+export const RESEARCH: Record<ResearchKey, ResearchDefinition> = Object.fromEntries(
+  Object.values(RESEARCH_BY_ID).map((entry: ResearchCatalogueEntry) => [
+    entry.id,
+    {
+      key: entry.id,
+      name: entry.name,
+      description: entry.description,
+      baseCost: entry.baseCost,
+      costGrowth: entry.costGrowth,
+      requires: Object.fromEntries(entry.requirements.map((requirement) => [requirement.id, requirement.level])),
+    },
+  ]),
+) as Record<ResearchKey, ResearchDefinition>;
+
+/*
 export const RESEARCH: Record<ResearchKey, ResearchDefinition> = {
   alloyProcessing: {
     key: 'alloyProcessing',
@@ -236,7 +253,7 @@ export const RESEARCH: Record<ResearchKey, ResearchDefinition> = {
     costGrowth: 1.8,
     requires: { aetherPhysics: 3, gateObservatory: 1 },
   },
-};
+};*/
 
 export interface ShipDefinition {
   key: ShipKey;

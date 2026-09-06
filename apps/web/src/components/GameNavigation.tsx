@@ -22,7 +22,7 @@ export default function GameNavigation({ planetId, showAdminLink, label }: GameN
   const primary: NavigationItem[] = [
     { label: 'Overview', href: planetBase ?? undefined, status: planetBase ? undefined : 'No planet' },
     { label: 'Buildings', href: planetBase ? `${planetBase}/buildings` : undefined, status: planetBase ? undefined : 'No planet' },
-    { label: 'Research', activePath: planetBase ? `${planetBase}/research` : undefined, status: 'Coming later' },
+    { label: 'Research', href: planetBase ? `${planetBase}/research` : undefined, status: planetBase ? undefined : 'No planet' },
     { label: 'Shipyard', activePath: planetBase ? `${planetBase}/shipyard` : undefined, status: 'Coming later' },
     { label: 'Fleet', activePath: planetBase ? `${planetBase}/fleet` : undefined, status: 'Coming later' },
     { label: 'Galaxy', href: '/game/galaxy' },

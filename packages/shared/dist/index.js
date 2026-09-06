@@ -21,3 +21,4 @@ __exportStar(require("./buildingCompletion"), exports);
 __exportStar(require("./buildingPrerequisites"), exports);
 __exportStar(require("./gamePresentation"), exports);
 __exportStar(require("./planetFields"), exports);
+__exportStar(require("./researchCatalogue"), exports);

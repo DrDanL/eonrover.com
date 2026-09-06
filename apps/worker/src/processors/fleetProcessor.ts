@@ -19,7 +19,7 @@ interface FleetJobData {
 
 type ShipCounts = Partial<Record<ShipKey, number>>;
 
-async function techBonus(userId: string, key: string): Promise<number> {
+export async function techBonus(userId: string, key: 'weaponTech' | 'shieldTech' | 'armourTech'): Promise<number> {
   const row = await prisma.research.findUnique({ where: { userId_key: { userId, key } } });
   return 1 + (row?.level ?? 0) * 0.1;
 }

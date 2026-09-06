@@ -6,6 +6,7 @@ import {
   RESEARCH,
   SHIPS,
 } from './constants';
+import { researchCostForLevel, researchDurationForLevel } from './researchCatalogue';
 import { BuildingKey, PlanetEnvironment, ResearchKey, ResourceAmounts, ResourceType, ShipKey } from './types';
 
 /**
@@ -27,8 +28,7 @@ export function buildingCost(key: BuildingKey, targetLevel: number): ResourceAmo
 }
 
 export function researchCost(key: ResearchKey, targetLevel: number): ResourceAmounts {
-  const def = RESEARCH[key];
-  return scaledCost(def.baseCost, def.costGrowth, targetLevel);
+  return researchCostForLevel(key, targetLevel);
 }
 
 /**
@@ -55,7 +55,7 @@ export function researchDurationSeconds(
   researchLabLevel: number,
   researchSpeed: number,
 ): number {
-  const raw = (cost.alloy + cost.heliox + cost.aether * 2) / (1000 * (1 + researchLabLevel));
+  const raw = (cost.alloy + cost.heliox + cost.aether * 2) / (1000 * (1 + Math.max(0, researchLabLevel)));
   const scaled = raw / Math.max(researchSpeed, 0.01);
   return Math.max(Math.round(scaled * 3600), 30);
 }
