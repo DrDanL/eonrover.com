@@ -1,3 +1,5 @@
+import type { BuildingKey } from '@eonrover/shared';
+
 export interface ResourceAmounts {
   alloy: number;
   heliox: number;
@@ -154,6 +156,56 @@ export interface PlanetEnergySummary {
   utilisationPercentage: number;
   productionEfficiency: number;
   status: 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
+}
+
+export interface OwnedPlanetOption {
+  id: string;
+  name: string;
+  isHomeworld: boolean;
+  galaxy: number;
+  system: number;
+  slot: number;
+}
+
+export interface CommandPlanetSummary {
+  identity: {
+    id: string;
+    name: string;
+    isHomeworld: boolean;
+    coordinates: {
+      galaxy: number;
+      system: number;
+      slot: number;
+    };
+    planetType: string;
+    temperature: number;
+    solarIndex: number;
+  };
+  resources: ResourceAmounts;
+  storage: ResourceAmounts;
+  productionPerHour: ResourceAmounts;
+  energy: PlanetEnergySummary;
+  activeConstruction: null | {
+    id: string;
+    buildingKey: BuildingKey;
+    buildingName: string;
+    targetLevel: number;
+    startedAt: string;
+    completesAt: string;
+  };
+  buildings: Array<{
+    key: BuildingKey;
+    name: string;
+    level: number;
+  }>;
+  energyBlockedBuildingKeys: BuildingKey[];
+}
+
+export interface CommandSummaryResponse {
+  serverTimestamp: string;
+  selectedPlanetId: string | null;
+  selectedPlanet: CommandPlanetSummary | null;
+  ownedPlanets: OwnedPlanetOption[];
 }
 
 export interface PresentedBuildQueueItem {

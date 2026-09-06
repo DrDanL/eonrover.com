@@ -490,6 +490,21 @@ async function runWorkflow(urls, credentials) {
   const planets = await apiRequest(apiUrl, '/api/planets', { cookie: session.pair });
   expect(Array.isArray(planets.body?.planets) && planets.body.planets.length === 1, 'The player does not have exactly one planet.');
   const planetId = planets.body.planets[0].id;
+  const initialCommand = await apiRequest(
+    apiUrl,
+    `/api/planets/command-summary?planetId=${encodeURIComponent(planetId)}`,
+    { cookie: session.pair },
+  );
+  expect(initialCommand.body?.selectedPlanetId === planetId, 'The command shell did not select the owned homeworld.');
+  expect(
+    Number.isFinite(Date.parse(initialCommand.body?.serverTimestamp)) &&
+      Number.isFinite(initialCommand.body?.selectedPlanet?.productionPerHour?.alloy),
+    'The command shell summary did not expose its authoritative timestamp and production rate.',
+  );
+  expect(
+    initialCommand.body?.ownedPlanets?.length === 1 && !('ownerId' in initialCommand.body.ownedPlanets[0]),
+    'The command shell planet selector was incomplete or exposed an owner record.',
+  );
   const storedSession = currentSession(userId);
   expect(storedSession.id === sessionDigest(session.rawToken), 'PostgreSQL did not store the session-token digest.');
   expect(storedSession.id !== session.rawToken, 'PostgreSQL stored a raw bearer session token.');
@@ -525,6 +540,16 @@ async function runWorkflow(urls, credentials) {
   expect(queued.pendingCount === 1 && queued.status === 'PENDING', 'The construction was not persisted once as PENDING.');
   assert.equal(queued.planetAlloy, beforeAlloy - queued.costAlloy, 'Alloy was not deducted exactly once.');
   assert.equal(queued.planetHeliox, beforeHeliox - queued.costHeliox, 'Heliox was not deducted exactly once.');
+  const commandDuringBuild = await apiRequest(
+    apiUrl,
+    `/api/planets/command-summary?planetId=${encodeURIComponent(planetId)}`,
+    { cookie: session.pair },
+  );
+  expect(
+    commandDuringBuild.body?.selectedPlanet?.activeConstruction?.id === constructionId &&
+      !('jobId' in commandDuringBuild.body.selectedPlanet.activeConstruction),
+    'The command shell did not expose a safe active-construction summary.',
+  );
   const duplicateStart = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, {
     method: 'POST',
     expectedStatus: 409,
@@ -555,6 +580,18 @@ async function runWorkflow(urls, credentials) {
   expect(
     notificationResponse.body.notifications.filter((item) => item.type === 'BUILDING_COMPLETE').length === 1,
     'The completion notification is not visible through the public API exactly once.',
+  );
+  const commandAfterBuild = await apiRequest(
+    apiUrl,
+    `/api/planets/command-summary?planetId=${encodeURIComponent(planetId)}`,
+    { cookie: session.pair },
+  );
+  expect(
+    commandAfterBuild.body?.selectedPlanet?.activeConstruction === null &&
+      commandAfterBuild.body?.selectedPlanet?.buildings?.some(
+        (building) => building.key === 'alloyMine' && building.level === 1,
+      ),
+    'The command shell did not refresh to the completed building state.',
   );
 
   step('Verifying timestamp-based resource production without double-accruing an interval.');

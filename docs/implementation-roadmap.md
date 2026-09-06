@@ -18,7 +18,7 @@ Each stage below is intentionally narrow, ordered, and independently testable. A
 
 ## Implementation status — trusted vertical slice
 
-The trusted slice is complete through the Stage 5A energy-aware building milestone:
+The trusted slice is complete through the Stage 5B authenticated command-interface milestone:
 
 | Execution stage | Status | Implemented outcome |
 | --- | --- | --- |
@@ -30,8 +30,9 @@ The trusted slice is complete through the Stage 5A energy-aware building milesto
 | Stage 4A | Complete | An opt-in project-scoped six-service harness proves the player slice, full-stack restart persistence, redaction, and cleanup. |
 | Stage 4B | Complete | Admin-only bounded search and audited, explicit, read-only authoritative player/planet inspection are connected and verified. |
 | Stage 5A | Complete | A central pure energy model now drives authoritative projections, hard in-transaction demand gating, category metadata, a presentation-safe building API, and the responsive planetary-development interface. |
+| Stage 5B | Complete | One allowlisted command summary drives the authenticated shell, live presentation-only resources, owned-planet navigation, global construction visibility, and the authoritative planet overview. |
 
-This execution numbering narrows the original roadmap: Stage 4A covers the vertical-slice portion of original Stage 5, Stage 4B covers the protected read-only inspection portion of original Stage 6, and the separately commissioned Stage 5A hardens the single-building experience before a general ordered queue. Broader original Stage 5/6 criteria—forced-termination/Redis-loss matrices, backup/restore rehearsal, dependency-readiness UI, and existing mutation cleanup—remain future work and are not claimed by this milestone. Original Stages 7–14 are unstarted except for the explicitly bounded energy/categorisation work in Stage 5A.
+This execution numbering narrows the original roadmap: Stage 4A covers the vertical-slice portion of original Stage 5, Stage 4B covers the protected read-only inspection portion of original Stage 6, Stage 5A hardens the single-building experience, and Stage 5B makes that trusted loop coherent across authenticated pages. Broader original Stage 5/6 criteria—forced-termination/Redis-loss matrices, backup/restore rehearsal, dependency-readiness UI, and existing mutation cleanup—remain future work and are not claimed by this milestone. Original Stages 7–14 are unstarted except for the explicitly bounded Stage 5A–5B interface work.
 
 ## Stage 0 — make verification safe and repeatable
 
@@ -447,7 +448,7 @@ Do not proceed to the systems below until all of these are true:
 
 ## Current milestone and next work
 
-The trusted vertical slice is implemented through Stage 5A. The single active building path now has hard, authoritative energy-capacity gating and a categorised interface; general ordered queues and broader systems remain separately selected future work.
+The trusted vertical slice is implemented through Stage 5B. The single active building loop now has hard energy gating, a categorised development screen, one authoritative command snapshot, persistent shell telemetry, and a useful planet overview. General ordered queues and broader systems remain separately selected future work.
 
 ## Decisions needed from the project owner
 

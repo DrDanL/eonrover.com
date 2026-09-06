@@ -2,9 +2,10 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import PlanetSidebar from '@/components/PlanetSidebar';
+import GameShell from '@/components/GameShell';
 import StatusPanel from '@/components/StatusPanel';
 import { useAuth } from '@/lib/AuthContext';
+import { GameCommandProvider } from '@/lib/GameCommandContext';
 
 export default function GameLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -33,14 +34,11 @@ export default function GameLayout({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <div className="game-shell">
-      <aside className="game-sidebar">
-        <PlanetSidebar showAdminLink={user.role !== 'PLAYER'} />
-      </aside>
-      <main className="game-main stack">
+    <GameCommandProvider>
+      <GameShell user={user}>
         {error ? <StatusPanel tone="error" title="Auth warning" message={error} /> : null}
         {children}
-      </main>
-    </div>
+      </GameShell>
+    </GameCommandProvider>
   );
 }

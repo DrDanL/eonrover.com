@@ -2,9 +2,9 @@
 
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import ResourceBar from '@/components/ResourceBar';
 import StatusPanel from '@/components/StatusPanel';
 import { ApiError, apiDelete, apiGet, apiPost } from '@/lib/api';
+import { requestCommandSummaryRefresh } from '@/lib/GameCommandContext';
 import {
   formatDateTime,
   formatDecimal,
@@ -126,6 +126,10 @@ export default function BuildingsPage() {
   const dueConstruction = data?.queue.find((item) => new Date(item.completesAt).getTime() <= now);
 
   useEffect(() => {
+    if (window.location.hash === '#energy') setActiveCategory('energy');
+  }, []);
+
+  useEffect(() => {
     if (!dueConstruction) {
       refreshedDueConstruction.current = null;
       return;
@@ -146,6 +150,7 @@ export default function BuildingsPage() {
     setActionError(null);
     try {
       await apiPost(`/api/planets/${planetId}/buildings`, { key });
+      requestCommandSummaryRefresh();
       reload();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'INSUFFICIENT_ENERGY') {
@@ -165,6 +170,7 @@ export default function BuildingsPage() {
     setActionError(null);
     try {
       await apiDelete(`/api/planets/${planetId}/buildings/${queueItemId}`);
+      requestCommandSummaryRefresh();
       reload();
     } catch (err) {
       setActionError(getErrorMessage(err));
@@ -244,8 +250,6 @@ export default function BuildingsPage() {
             </div>
             <p className="energy-guidance">{energyCopy.detail}</p>
           </section>
-
-          <ResourceBar resources={data.planet} storage={data.storage} production={data.production} />
 
           <section className="panel stack active-construction" aria-labelledby="construction-heading">
             <div className="active-construction-heading">

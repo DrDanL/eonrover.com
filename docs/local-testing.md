@@ -229,6 +229,24 @@ All calculations use persisted building levels and the planet solar index. Brows
 cost, level, duration or balance fields are ignored. The fresh homeworld keeps its existing Solar
 Array level 1, so Alloy Mine level 1 remains a valid first upgrade without a balance change.
 
+### Authenticated command shell checks
+
+After signing in, the `/game` route selects an owned planet and opens its overview. The resource bar
+is shared by authenticated player pages: balances may visibly rise between reads, but they are
+projected only from the last server timestamp/rates and stop at the displayed storage capacity.
+
+- Leave a visible page open for a few seconds and confirm a producing resource increases smoothly.
+  The browser should not request the command-summary endpoint every second; its normal authoritative
+  interval is one minute.
+- Hide and restore the tab. The live timer pauses while hidden, then the shell immediately refreshes
+  authoritative state when visible again.
+- Start or cancel a building and confirm the global construction row refreshes on other player pages.
+  Completion is confirmed by the server; an expired browser countdown never completes a row locally.
+- If the account has multiple real colonies, switch planets from Overview and Buildings. The
+  equivalent section is preserved; switching from an empire-wide page returns to planet overview.
+- Research, Shipyard and Fleet are labelled **Coming later** in the shell because their existing
+  prototype routes do not yet meet the trusted queue/effect/recovery standard.
+
 ## 7. Testing email verification and account recovery
 
 1. **Successful delivery:** register a unique account and check that one verification message
