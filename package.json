@@ -10,11 +10,15 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test:unit && npm run test:integration",
-    "test:unit": "node --test test/databaseSafety.test.cjs test/verticalSliceSafety.test.cjs test/adminPlayerStatePage.test.cjs && npm run test --workspace @eonrover/shared && npm run test:config --workspace @eonrover/api && npm run test:config --workspace @eonrover/worker",
+    "test:unit": "node --test test/databaseSafety.test.cjs test/verticalSliceSafety.test.cjs test/adminPlayerStatePage.test.cjs test/localStartup.test.cjs && npm run test --workspace @eonrover/shared && npm run test:config --workspace @eonrover/api && npm run test:config --workspace @eonrover/worker",
     "test:integration": "npm run test:integration:api && npm run test:integration:worker",
     "test:integration:api": "npm run test --workspace @eonrover/api",
     "test:integration:worker": "npm run test --workspace @eonrover/worker",
     "test:vertical-slice": "node scripts/vertical-slice.cjs",
+    "test:reset": "node scripts/reset-and-test.cjs",
+    "start:local": "node scripts/start-local.cjs start",
+    "stop:local": "node scripts/start-local.cjs stop",
+    "logs:local": "node scripts/start-local.cjs logs",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": {

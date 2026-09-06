@@ -115,9 +115,126 @@ export function totalEnergySupply(solarArrayLevel: number, solarIndex: number): 
  * reduced efficiency factor between 0 and 1.
  */
 export function energyEfficiency(supply: number, consumption: number): number {
+  requireFinite('Energy supply', supply);
+  requireFinite('Energy demand', consumption);
+  if (supply < 0 || consumption < 0) throw new RangeError('Energy values cannot be negative');
   if (consumption <= 0) return 1;
   if (supply >= consumption) return 1;
   return Math.max(0, supply / consumption);
+}
+
+export type PlanetEnergyStatus = 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
+
+export interface PlanetEnergyState {
+  supply: number;
+  demand: number;
+  available: number;
+  utilisationPercentage: number;
+  productionEfficiency: number;
+  status: PlanetEnergyStatus;
+}
+
+export interface BuildingEnergyProjection extends PlanetEnergyState {
+  buildingKey: BuildingKey;
+  targetLevel: number;
+  projectedSupply: number;
+  projectedDemand: number;
+  projectedAvailable: number;
+  projectedUtilisationPercentage: number;
+  projectedProductionEfficiency: number;
+  additionalEnergyRequired: number;
+  shortfall: number;
+  hasSufficientEnergy: boolean;
+  energyRequirementMet: boolean;
+}
+
+function validatedBuildingLevel(key: BuildingKey, level: number): number {
+  requireFinite(`${key} level`, level);
+  if (!Number.isInteger(level) || level < 0) {
+    throw new RangeError('Building levels must be non-negative integers');
+  }
+  return level;
+}
+
+/**
+ * Planet energy is derived only from persisted building levels and the planet's
+ * solar index. Supply is the fixed base supply plus generator output; demand is
+ * the sum of positive continuous building loads. Production efficiency remains
+ * min(1, supply / demand) so legacy deficit planets continue to operate safely.
+ */
+export function calculatePlanetEnergy(
+  buildingLevels: Partial<Record<BuildingKey, number>>,
+  solarIndex: number,
+): PlanetEnergyState {
+  requireFinite('Planet solar index', solarIndex);
+
+  let supply = BASE_ENERGY_SUPPLY;
+  let demand = 0;
+  for (const definition of Object.values(BUILDINGS)) {
+    const level = validatedBuildingLevel(definition.key, buildingLevels[definition.key] ?? 0);
+    const effect = buildingEnergy(definition.key, level, solarIndex);
+    requireFinite(`${definition.key} energy`, effect);
+    if (effect < 0) supply += -effect;
+    else demand += effect;
+  }
+
+  const available = supply - demand;
+  const utilisationPercentage = supply === 0 ? (demand === 0 ? 0 : 100) : (demand / supply) * 100;
+  const productionEfficiency = energyEfficiency(supply, demand);
+  for (const [label, value] of Object.entries({ supply, demand, available, utilisationPercentage })) {
+    requireFinite(`Calculated energy ${label}`, value);
+  }
+
+  const status: PlanetEnergyStatus =
+    available < 0
+      ? 'deficit'
+      : available === 0
+        ? 'at-capacity'
+        : utilisationPercentage >= 80
+          ? 'approaching'
+          : 'healthy';
+
+  return { supply, demand, available, utilisationPercentage, productionEfficiency, status };
+}
+
+/**
+ * Projects one authoritative building upgrade. Only upgrades that add demand
+ * are gated: generators and zero-demand facilities remain recovery paths even
+ * for an existing deficit. Exact capacity is valid.
+ */
+export function projectBuildingEnergy(
+  buildingLevels: Partial<Record<BuildingKey, number>>,
+  solarIndex: number,
+  buildingKey: BuildingKey,
+  targetLevel: number,
+): BuildingEnergyProjection {
+  validatedBuildingLevel(buildingKey, targetLevel);
+  const current = calculatePlanetEnergy(buildingLevels, solarIndex);
+  const projectedLevels = { ...buildingLevels, [buildingKey]: targetLevel };
+  const projected = calculatePlanetEnergy(projectedLevels, solarIndex);
+  const additionalEnergyRequired = Math.max(0, projected.demand - current.demand);
+  const shortfall = Math.max(0, projected.demand - projected.supply);
+  const hasSufficientEnergy = projected.demand <= projected.supply;
+  const energyRequirementMet = additionalEnergyRequired === 0 || hasSufficientEnergy;
+
+  for (const [label, value] of Object.entries({ additionalEnergyRequired, shortfall })) {
+    requireFinite(`Projected energy ${label}`, value);
+  }
+
+  return {
+    ...current,
+    buildingKey,
+    targetLevel,
+    projectedSupply: projected.supply,
+    projectedDemand: projected.demand,
+    projectedAvailable: projected.available,
+    projectedUtilisationPercentage: projected.utilisationPercentage,
+    projectedProductionEfficiency: projected.productionEfficiency,
+    additionalEnergyRequired,
+    shortfall,
+    hasSufficientEnergy,
+    energyRequirementMet,
+  };
 }
 
 export function planetProductionMultiplier(

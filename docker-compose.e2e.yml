@@ -13,8 +13,6 @@ services:
 
   worker:
     restart: 'no'
-    ports:
-      - '${BIND_ADDRESS:-127.0.0.1}:${WORKER_HEALTH_PORT:-4100}:${WORKER_HEALTH_PORT:-4100}'
 
   web:
     restart: 'no'

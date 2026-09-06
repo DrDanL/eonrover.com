@@ -118,8 +118,8 @@ export async function getAdminPlayerState(playerId: string, currentTime = new Da
       production,
       energy: {
         supply: energy.supply,
-        demand: energy.consumption,
-        efficiency: energy.efficiency,
+        demand: energy.demand,
+        efficiency: energy.productionEfficiency,
       },
       storage: {
         alloy: storageCapacity(buildingLevels.get('alloyStorage') ?? 0),

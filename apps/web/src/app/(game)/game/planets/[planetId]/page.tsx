@@ -66,8 +66,8 @@ export default function PlanetOverviewPage() {
             <div className="panel stack">
               <h2 style={{ margin: 0 }}>Energy</h2>
               <p style={{ margin: 0 }}>Supply: {formatNumber(data.energy.supply)}</p>
-              <p style={{ margin: 0 }}>Consumption: {formatNumber(data.energy.consumption)}</p>
-              <p style={{ margin: 0 }}>Efficiency: {Math.round(data.energy.efficiency * 100)}%</p>
+              <p style={{ margin: 0 }}>Demand: {formatNumber(data.energy.demand)}</p>
+              <p style={{ margin: 0 }}>Efficiency: {Math.round(data.energy.productionEfficiency * 100)}%</p>
             </div>
             <div className="panel stack">
               <h2 style={{ margin: 0 }}>Infrastructure</h2>

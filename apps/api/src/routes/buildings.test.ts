@@ -44,11 +44,55 @@ describe('buildings queue', () => {
 
     expect(res.body.queueItem.buildingKey).toBe('alloyMine');
     expect(res.body.queueItem.targetLevel).toBe(1);
+    expect(res.body.queueItem).not.toHaveProperty('jobId');
 
     const updated = await prisma.planet.findUniqueOrThrow({ where: { id: planet.id } });
     // Starting alloy 500, heliox 300; alloyMine level 1 costs 60 alloy / 15 heliox.
     expect(updated.alloy).toBe(440);
     expect(updated.heliox).toBe(285);
+  });
+
+  it('returns categorised presentation data without raw definitions or queue job identifiers', async () => {
+    const { cookie, planet } = await createLoggedInPlayer('catalog@example.com', 'catalog1');
+    const enqueue = await request(app)
+      .post(`/api/planets/${planet.id}/buildings`)
+      .set('Cookie', cookie)
+      .set('X-Eonrover-Client', '1')
+      .send({ key: 'alloyMine' })
+      .expect(201);
+
+    const response = await request(app)
+      .get(`/api/planets/${planet.id}/buildings`)
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(response.body.categories.map((category: { key: string }) => category.key)).toEqual([
+      'resources',
+      'energy',
+      'infrastructure',
+    ]);
+    expect(response.body.catalog).toHaveLength(10);
+    expect(response.body.catalog.find((building: { key: string }) => building.key === 'solarArray')).toMatchObject({
+      id: 'solarArray',
+      category: 'energy',
+      currentLevel: 1,
+      nextLevel: 2,
+      affordable: true,
+      canConstruct: false,
+      unavailableReasonCode: 'CONSTRUCTION_IN_PROGRESS',
+    });
+    expect(response.body.catalog[0]).not.toHaveProperty('baseCost');
+    expect(response.body.catalog[0]).not.toHaveProperty('costGrowth');
+    expect(response.body.planet).toEqual({
+      alloy: expect.any(Number),
+      heliox: expect.any(Number),
+      aether: expect.any(Number),
+      lastProductionAt: expect.any(String),
+    });
+    expect(response.body.planet).not.toHaveProperty('ownerId');
+    expect(response.body.queue).toHaveLength(1);
+    expect(response.body.queue[0]).toMatchObject({ id: enqueue.body.queueItem.id, buildingName: 'Alloy Mine' });
+    expect(response.body.queue[0]).not.toHaveProperty('jobId');
   });
 
   it('rejects a building whose prerequisites are not met', async () => {

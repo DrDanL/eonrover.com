@@ -18,18 +18,7 @@ class BuildingCompletionInvariantError extends Error {
 }
 exports.BuildingCompletionInvariantError = BuildingCompletionInvariantError;
 function settleProduction(planet, state, buildingLevels, currentTime, economySpeed, preserveExistingMinimum = false) {
-    let energySupply = constants_1.BASE_ENERGY_SUPPLY;
-    let energyDemand = 0;
-    for (const [key, level] of Object.entries(buildingLevels)) {
-        const definition = constants_1.BUILDINGS[key];
-        if (!definition)
-            continue;
-        const energy = (0, formulas_1.buildingEnergy)(definition.key, level, planet.environment.solarIndex);
-        if (energy >= 0)
-            energyDemand += energy;
-        else
-            energySupply += -energy;
-    }
+    const energy = (0, formulas_1.calculatePlanetEnergy)(buildingLevels, planet.environment.solarIndex);
     const production = (0, formulas_1.calculatePlanetProduction)({
         previousProductionAt: state.lastProductionAt,
         currentTime,
@@ -41,8 +30,8 @@ function settleProduction(planet, state, buildingLevels, currentTime, economySpe
             heliox: (0, formulas_1.storageCapacity)(buildingLevels.helioxStorage ?? 0),
             aether: (0, formulas_1.storageCapacity)(buildingLevels.aetherStorage ?? 0),
         },
-        energySupply,
-        energyDemand,
+        energySupply: energy.supply,
+        energyDemand: energy.demand,
         economySpeed,
         // Research production bonuses remain deliberately deferred from Stage 3A.
         productionModifier: 1,

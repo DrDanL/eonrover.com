@@ -35,6 +35,41 @@ export declare function totalEnergySupply(solarArrayLevel: number, solarIndex: n
  * reduced efficiency factor between 0 and 1.
  */
 export declare function energyEfficiency(supply: number, consumption: number): number;
+export type PlanetEnergyStatus = 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
+export interface PlanetEnergyState {
+    supply: number;
+    demand: number;
+    available: number;
+    utilisationPercentage: number;
+    productionEfficiency: number;
+    status: PlanetEnergyStatus;
+}
+export interface BuildingEnergyProjection extends PlanetEnergyState {
+    buildingKey: BuildingKey;
+    targetLevel: number;
+    projectedSupply: number;
+    projectedDemand: number;
+    projectedAvailable: number;
+    projectedUtilisationPercentage: number;
+    projectedProductionEfficiency: number;
+    additionalEnergyRequired: number;
+    shortfall: number;
+    hasSufficientEnergy: boolean;
+    energyRequirementMet: boolean;
+}
+/**
+ * Planet energy is derived only from persisted building levels and the planet's
+ * solar index. Supply is the fixed base supply plus generator output; demand is
+ * the sum of positive continuous building loads. Production efficiency remains
+ * min(1, supply / demand) so legacy deficit planets continue to operate safely.
+ */
+export declare function calculatePlanetEnergy(buildingLevels: Partial<Record<BuildingKey, number>>, solarIndex: number): PlanetEnergyState;
+/**
+ * Projects one authoritative building upgrade. Only upgrades that add demand
+ * are gated: generators and zero-demand facilities remain recovery paths even
+ * for an existing deficit. Exact capacity is valid.
+ */
+export declare function projectBuildingEnergy(buildingLevels: Partial<Record<BuildingKey, number>>, solarIndex: number, buildingKey: BuildingKey, targetLevel: number): BuildingEnergyProjection;
 export declare function planetProductionMultiplier(env: PlanetEnvironment, resource: 'alloy' | 'heliox' | 'aether'): number;
 /**
  * Given the last time production was calculated and now, returns the

@@ -3,13 +3,119 @@ import { test } from 'node:test';
 import {
   accumulateProduction,
   buildingCost,
+  calculatePlanetEnergy,
   distanceBetween,
   espionageAccuracy,
   flightDurationSeconds,
+  projectBuildingEnergy,
   resolveCombat,
   scaledCost,
 } from './formulas';
 import { CombatUnit } from './formulas';
+import { BUILDING_CATEGORIES, BUILDINGS } from './constants';
+
+test('calculates current energy supply, demand and capacity state', () => {
+  const energy = calculatePlanetEnergy({ alloyMine: 1, helioxExtractor: 1, solarArray: 1 }, 0.7);
+
+  assert.equal(energy.supply, 46.4);
+  assert.equal(energy.demand, 22);
+  assert.equal(energy.available, 24.4);
+  assert.equal(energy.utilisationPercentage, (22 / 46.4) * 100);
+  assert.equal(energy.productionEfficiency, 1);
+  assert.equal(energy.status, 'healthy');
+});
+
+test('projects supply and demand from the selected authoritative target level', () => {
+  const projection = projectBuildingEnergy({ alloyMine: 1, solarArray: 1 }, 0.7, 'alloyMine', 2);
+
+  assert.equal(projection.supply, 46.4);
+  assert.equal(projection.demand, 10);
+  assert.equal(projection.projectedSupply, 46.4);
+  assert.equal(projection.projectedDemand, 20);
+  assert.equal(projection.additionalEnergyRequired, 10);
+  assert.equal(projection.projectedAvailable, 26.4);
+});
+
+test('allows an upgrade that reaches exact capacity', () => {
+  const projection = projectBuildingEnergy({ alloyMine: 1 }, 0.7, 'alloyMine', 2);
+
+  assert.equal(projection.projectedSupply, 20);
+  assert.equal(projection.projectedDemand, 20);
+  assert.equal(projection.shortfall, 0);
+  assert.equal(projection.hasSufficientEnergy, true);
+  assert.equal(projection.energyRequirementMet, true);
+});
+
+test('reports a one-unit energy shortfall', () => {
+  const projection = projectBuildingEnergy(
+    { alloyMine: 1, helioxExtractor: 1, solarArray: 1 },
+    0,
+    'alloyMine',
+    2,
+  );
+
+  assert.equal(projection.projectedSupply, 31);
+  assert.equal(projection.projectedDemand, 32);
+  assert.equal(projection.shortfall, 1);
+  assert.equal(projection.energyRequirementMet, false);
+});
+
+test('allows an energy-generating upgrade while the planet remains in deficit', () => {
+  const projection = projectBuildingEnergy({ alloyMine: 4 }, 0, 'solarArray', 1);
+
+  assert.equal(projection.status, 'deficit');
+  assert.equal(projection.projectedSupply, 31);
+  assert.equal(projection.projectedDemand, 40);
+  assert.equal(projection.hasSufficientEnergy, false);
+  assert.equal(projection.additionalEnergyRequired, 0);
+  assert.equal(projection.energyRequirementMet, true);
+});
+
+test('allows a zero-demand facility while the planet remains in deficit', () => {
+  const projection = projectBuildingEnergy({ alloyMine: 3 }, 0.7, 'researchLab', 1);
+
+  assert.equal(projection.status, 'deficit');
+  assert.equal(projection.projectedDemand, projection.demand);
+  assert.equal(projection.additionalEnergyRequired, 0);
+  assert.equal(projection.energyRequirementMet, true);
+});
+
+test('keeps legacy deficit planets valid with reduced production efficiency', () => {
+  const energy = calculatePlanetEnergy({ alloyMine: 3 }, 0.7);
+
+  assert.equal(energy.status, 'deficit');
+  assert.equal(energy.available, -10);
+  assert.equal(energy.productionEfficiency, 2 / 3);
+});
+
+test('rejects non-finite and invalid energy inputs', () => {
+  assert.throws(() => calculatePlanetEnergy({}, Number.NaN), /finite/);
+  assert.throws(() => calculatePlanetEnergy({ alloyMine: Number.POSITIVE_INFINITY }, 0.7), /finite/);
+  assert.throws(() => calculatePlanetEnergy({ alloyMine: 1.5 }, 0.7), /non-negative integers/);
+});
+
+test('maps every implemented building to the deterministic category order', () => {
+  assert.deepEqual(BUILDING_CATEGORIES.map((category) => category.key), [
+    'resources',
+    'energy',
+    'infrastructure',
+  ]);
+  assert.deepEqual(
+    Object.values(BUILDINGS).map(({ key, category }) => [key, category]),
+    [
+      ['alloyMine', 'resources'],
+      ['helioxExtractor', 'resources'],
+      ['aetherSynthesizer', 'resources'],
+      ['solarArray', 'energy'],
+      ['alloyStorage', 'resources'],
+      ['helioxStorage', 'resources'],
+      ['aetherStorage', 'resources'],
+      ['shipyard', 'infrastructure'],
+      ['researchLab', 'infrastructure'],
+      ['gateObservatory', 'infrastructure'],
+    ],
+  );
+});
 
 test('scaledCost grows exponentially per level', () => {
   const l1 = scaledCost({ alloy: 60, heliox: 15, aether: 0 }, 1.5, 1);

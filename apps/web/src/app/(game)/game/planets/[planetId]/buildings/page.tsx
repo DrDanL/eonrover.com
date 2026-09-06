@@ -1,26 +1,118 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import ResourceBar from '@/components/ResourceBar';
 import StatusPanel from '@/components/StatusPanel';
 import { ApiError, apiDelete, apiGet, apiPost } from '@/lib/api';
-import { enumLabel, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
+import {
+  formatDateTime,
+  formatDecimal,
+  formatNumber,
+  formatRelativeCountdown,
+} from '@/lib/formatters';
 import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
-import { BuildingCatalogItem, BuildQueueItem, PlanetSummary, ResourceAmounts } from '@/lib/web-types';
+import {
+  BuildingCatalogItem,
+  BuildingCategory,
+  BuildingCategoryMetadata,
+  BuildingEnergyEffect,
+  PlanetEnergySummary,
+  PresentedBuildQueueItem,
+  ResourceAmounts,
+} from '@/lib/web-types';
 
 interface BuildingsResponse {
+  categories: BuildingCategoryMetadata[];
   catalog: BuildingCatalogItem[];
-  queue: BuildQueueItem[];
-  planet: PlanetSummary;
+  queue: PresentedBuildQueueItem[];
+  planet: ResourceAmounts & { lastProductionAt: string };
+  energy: PlanetEnergySummary;
   storage: ResourceAmounts;
   production: ResourceAmounts;
+}
+
+const ENERGY_STATE_COPY: Record<PlanetEnergySummary['status'], { label: string; detail: string }> = {
+  healthy: {
+    label: 'Healthy spare capacity',
+    detail: 'The planetary grid has room for additional continuous demand.',
+  },
+  approaching: {
+    label: 'Approaching capacity',
+    detail: 'Plan another Solar Array upgrade before adding much more demand.',
+  },
+  'at-capacity': {
+    label: 'Exact capacity',
+    detail: 'The grid is fully allocated. Add generation before another energy-consuming upgrade.',
+  },
+  deficit: {
+    label: 'Energy deficit',
+    detail: 'Resource production is reduced. Upgrade the Solar Array to restore grid capacity.',
+  },
+};
+
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', `${remainder}s`]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function energyEffectText(effect: BuildingEnergyEffect): string {
+  if (effect.kind === 'none') return 'No continuous energy demand';
+  return `${effect.kind === 'supply' ? 'Generates' : 'Uses'} ${formatDecimal(effect.amount)} energy`;
+}
+
+function BuildingSchematic({ building }: { building: BuildingCatalogItem }) {
+  const isEnergy = building.category === 'energy';
+  const isResources = building.category === 'resources';
+  return (
+    <svg
+      className={`building-schematic building-schematic-${building.category}`}
+      viewBox="0 0 160 100"
+      role="img"
+      aria-label={`${building.name} planetary facility schematic`}
+    >
+      <title>{building.name} planetary facility schematic</title>
+      <path className="schematic-horizon" d="M8 87 Q80 65 152 87" />
+      {isEnergy ? (
+        <>
+          <circle className="schematic-orbit" cx="80" cy="27" r="15" />
+          <path className="schematic-structure" d="M80 42V69M63 74h34M69 69l11-27 11 27" />
+          <path className="schematic-signal" d="M48 52l22 8M112 52l-22 8M51 40l22 9M109 40l-22 9" />
+        </>
+      ) : isResources ? (
+        <>
+          <path className="schematic-structure" d="M37 76V42h22v34M66 76V29h29v47M102 76V49h20v27" />
+          <path className="schematic-signal" d="M44 35l8-12 8 12M76 22l5-9 5 9M109 42l5-8 5 8" />
+          <circle className="schematic-orbit" cx="80" cy="52" r="6" />
+        </>
+      ) : (
+        <>
+          <path className="schematic-structure" d="M35 76l10-37h70l10 37M52 76V51h56v25M71 76V58h18v18" />
+          <path className="schematic-signal" d="M80 39V20M68 29l12-9 12 9" />
+          <circle className="schematic-orbit" cx="80" cy="20" r="4" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function resourceShortfallText(building: BuildingCatalogItem): string | null {
+  const missing = (Object.entries(building.missingResources) as Array<[keyof ResourceAmounts, number]>)
+    .filter(([, amount]) => amount > 0)
+    .map(([resource, amount]) => `${formatNumber(amount)} more ${resource}`);
+  return missing.length > 0 ? `Needs ${missing.join(', ')}.` : null;
 }
 
 export default function BuildingsPage() {
   const params = useParams<{ planetId: string }>();
   const planetId = params.planetId;
   const now = useTicker();
+  const [activeCategory, setActiveCategory] = useState<BuildingCategory>('resources');
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const refreshedDueConstruction = useRef<string | null>(null);
@@ -30,7 +122,6 @@ export default function BuildingsPage() {
     [planetId],
   );
   const { data, loading, error, reload } = useApiData(loadBuildings);
-  const hasActiveConstruction = (data?.queue.length ?? 0) > 0;
   const actionPending = busyKey !== null;
   const dueConstruction = data?.queue.find((item) => new Date(item.completesAt).getTime() <= now);
 
@@ -44,6 +135,12 @@ export default function BuildingsPage() {
     reload();
   }, [dueConstruction, reload]);
 
+  useEffect(() => {
+    if (data && !data.categories.some((category) => category.key === activeCategory)) {
+      setActiveCategory(data.categories[0]?.key ?? 'resources');
+    }
+  }, [activeCategory, data]);
+
   async function enqueue(key: string) {
     setBusyKey(key);
     setActionError(null);
@@ -51,11 +148,13 @@ export default function BuildingsPage() {
       await apiPost(`/api/planets/${planetId}/buildings`, { key });
       reload();
     } catch (err) {
-      setActionError(
-        err instanceof ApiError && err.code === 'CONSTRUCTION_IN_PROGRESS'
-          ? 'A building upgrade is already in progress on this planet.'
-          : getErrorMessage(err),
-      );
+      if (err instanceof ApiError && err.code === 'INSUFFICIENT_ENERGY') {
+        setActionError('The grid no longer has enough capacity. Upgrade the Solar Array and try again.');
+        setActiveCategory('energy');
+      } else {
+        setActionError(getErrorMessage(err));
+      }
+      reload();
     } finally {
       setBusyKey(null);
     }
@@ -74,59 +173,212 @@ export default function BuildingsPage() {
     }
   }
 
+  function selectCategory(category: BuildingCategory) {
+    setActiveCategory(category);
+    document.getElementById('building-category-panel')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function handleTabKey(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const tabList = event.currentTarget.closest('[role="tablist"]');
+    const tabs = Array.from(tabList?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
+    const currentIndex = tabs.indexOf(event.currentTarget);
+    if (currentIndex < 0 || tabs.length === 0) return;
+    event.preventDefault();
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? tabs.length - 1
+          : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[nextIndex].focus();
+    selectCategory(tabs[nextIndex].dataset.category as BuildingCategory);
+  }
+
+  const energyCopy = data ? ENERGY_STATE_COPY[data.energy.status] : null;
+  const visibleBuildings = data?.catalog.filter((building) => building.category === activeCategory) ?? [];
+
   return (
-    <section className="stack">
-      <div className="panel stack"><h1 style={{ margin: 0 }}>Buildings</h1><p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Queue upgrades and monitor their completion windows.</p></div>
+    <section className="stack buildings-page" aria-labelledby="buildings-heading">
+      <header className="panel buildings-heading">
+        <div>
+          <p className="eyebrow">Planetary development</p>
+          <h1 id="buildings-heading">Buildings</h1>
+          <p>Shape the colony grid, expand resource output and coordinate one durable upgrade at a time.</p>
+        </div>
+      </header>
       {loading ? <StatusPanel message="Loading building catalog..." /> : null}
       {error ? <StatusPanel tone="error" title="Unable to load buildings" message={error} /> : null}
       {actionError ? <StatusPanel tone="error" title="Build action failed" message={actionError} /> : null}
       {!loading && !error && !data ? <StatusPanel message="No building data returned." /> : null}
-      {!loading && !error && data ? (
+      {!loading && !error && data && energyCopy ? (
         <>
+          <section className={`panel stack energy-summary energy-${data.energy.status}`} aria-labelledby="energy-heading">
+            <div className="energy-summary-heading">
+              <div>
+                <p className="eyebrow">Planetary grid</p>
+                <h2 id="energy-heading">Energy capacity</h2>
+              </div>
+              <span className="energy-state-label">{energyCopy.label}</span>
+            </div>
+            <div className="energy-metrics">
+              <div><span>Supply</span><strong>{formatDecimal(data.energy.supply)}</strong></div>
+              <div><span>Demand</span><strong>{formatDecimal(data.energy.demand)}</strong></div>
+              <div><span>{data.energy.available < 0 ? 'Deficit' : 'Available'}</span><strong>{formatDecimal(Math.abs(data.energy.available))}</strong></div>
+              <div><span>Production efficiency</span><strong>{formatDecimal(data.energy.productionEfficiency * 100)}%</strong></div>
+            </div>
+            <div className="energy-capacity-row">
+              <span id="energy-capacity-label">Capacity utilisation</span>
+              <strong>{formatDecimal(data.energy.utilisationPercentage)}%</strong>
+            </div>
+            <div
+              className="energy-capacity-bar"
+              role="progressbar"
+              aria-labelledby="energy-capacity-label"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.min(100, Math.max(0, Math.round(data.energy.utilisationPercentage)))}
+              aria-valuetext={`${formatDecimal(data.energy.utilisationPercentage)} percent utilised; ${energyCopy.label}`}
+            >
+              <span style={{ width: `${Math.min(100, Math.max(0, data.energy.utilisationPercentage))}%` }} />
+            </div>
+            <p className="energy-guidance">{energyCopy.detail}</p>
+          </section>
+
           <ResourceBar resources={data.planet} storage={data.storage} production={data.production} />
-          <div className="panel stack">
-            <h2 style={{ margin: 0 }}>Current queue</h2>
-            {data.queue.length === 0 ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>No building upgrades queued.</p> : null}
+
+          <section className="panel stack active-construction" aria-labelledby="construction-heading">
+            <div className="active-construction-heading">
+              <div>
+                <p className="eyebrow">Authoritative queue</p>
+                <h2 id="construction-heading">Active construction</h2>
+              </div>
+              <span className="tag">{data.queue.length > 0 ? 'In progress' : 'Queue clear'}</span>
+            </div>
+            {data.queue.length === 0 ? (
+              <p className="muted-copy">No building upgrade is active. Choose a facility below to begin.</p>
+            ) : null}
             {data.queue.map((item) => (
-              <div key={item.id} className="panel stack">
-                <strong>{enumLabel(item.buildingKey)} → level {item.targetLevel}</strong>
-                <span style={{ color: 'var(--color-text-muted)' }}>Completes in {formatRelativeCountdown(item.completesAt, now)}</span>
+              <div key={item.id} className="construction-card">
+                <div className="stack" style={{ gap: '0.4rem' }}>
+                  <strong>{item.buildingName} → level {item.targetLevel}</strong>
+                  <span>Completes {formatDateTime(item.completesAt)}</span>
+                  <span className="construction-countdown" aria-live="polite">
+                    {formatRelativeCountdown(item.completesAt, now)} remaining
+                  </span>
+                  <small className="muted-copy">
+                    Cancellation returns {item.cancellation.refundPercentage}%: {formatNumber(item.cancellation.refund.alloy)} Alloy,{' '}
+                    {formatNumber(item.cancellation.refund.heliox)} Heliox, {formatNumber(item.cancellation.refund.aether)} Aether.
+                  </small>
+                </div>
                 <button type="button" onClick={() => cancelQueue(item.id)} disabled={actionPending}>
-                  {busyKey === item.id ? 'Cancelling...' : 'Cancel'}
+                  {busyKey === item.id ? 'Cancelling...' : 'Cancel upgrade'}
                 </button>
               </div>
             ))}
-          </div>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-            {data.catalog.map((building) => (
-              <article className="panel stack" key={building.key}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline' }}>
-                  <h2 style={{ margin: 0 }}>{building.name}</h2>
-                  <span className="tag">Level {building.level}</span>
-                </div>
-                <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>{building.description}</p>
-                <p style={{ margin: 0 }}>Next cost: {formatNumber(building.nextCost.alloy)} alloy, {formatNumber(building.nextCost.heliox)} heliox, {formatNumber(building.nextCost.aether)} aether</p>
-                <p style={{ margin: 0 }}>Energy: {building.baseEnergy < 0 ? 'Produces' : 'Consumes'} {formatNumber(Math.abs(building.baseEnergy))}</p>
-                {building.requires && Object.keys(building.requires).length > 0 ? (
-                  <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>
-                    Requires: {Object.entries(building.requires).map(([key, level]) => `${enumLabel(key)} ${level}`).join(', ')}
-                  </p>
-                ) : null}
+          </section>
+
+          <nav className="building-category-nav" aria-label="Building categories">
+            <div role="tablist" aria-label="Building categories">
+              {data.categories.map((category) => (
                 <button
+                  key={category.key}
                   type="button"
-                  className="btn btn-primary"
-                  onClick={() => enqueue(building.key)}
-                  disabled={actionPending || hasActiveConstruction}
+                  role="tab"
+                  id={`building-tab-${category.key}`}
+                  aria-selected={activeCategory === category.key}
+                  aria-controls="building-category-panel"
+                  tabIndex={activeCategory === category.key ? 0 : -1}
+                  data-category={category.key}
+                  onClick={() => selectCategory(category.key)}
+                  onKeyDown={handleTabKey}
                 >
-                  {busyKey === building.key
-                    ? 'Queueing...'
-                    : hasActiveConstruction
-                      ? 'Construction in progress'
-                      : 'Queue upgrade'}
+                  {category.label}
+                  <span>{data.catalog.filter((building) => building.category === category.key).length}</span>
                 </button>
-              </article>
-            ))}
-          </div>
+              ))}
+            </div>
+          </nav>
+
+          <section
+            id="building-category-panel"
+            className="stack"
+            role="tabpanel"
+            aria-labelledby={`building-tab-${activeCategory}`}
+            tabIndex={0}
+          >
+            <div className="category-intro">
+              <div>
+                <p className="eyebrow">Facility catalogue</p>
+                <h2>{data.categories.find((category) => category.key === activeCategory)?.label}</h2>
+              </div>
+              <p>{data.categories.find((category) => category.key === activeCategory)?.description}</p>
+            </div>
+            <div className="building-grid">
+              {visibleBuildings.map((building) => {
+                const unavailableText =
+                  building.unavailableReasonCode === 'INSUFFICIENT_RESOURCES'
+                    ? resourceShortfallText(building) ?? building.unavailableReason
+                    : building.unavailableReason;
+                return (
+                  <article className="panel building-card" key={building.id}>
+                    <BuildingSchematic building={building} />
+                    <div className="building-card-title">
+                      <div>
+                        <span className="building-category-label">
+                          {data.categories.find((category) => category.key === building.category)?.label}
+                        </span>
+                        <h3>{building.name}</h3>
+                      </div>
+                      <span className="tag">Level {building.currentLevel}</span>
+                    </div>
+                    <p className="building-description">{building.description}</p>
+                    <dl className="building-details">
+                      <div>
+                        <dt>Next benefit</dt>
+                        <dd>{building.effect.label}: {formatDecimal(building.effect.current)} → {formatDecimal(building.effect.next)} {building.effect.unit}</dd>
+                      </div>
+                      <div>
+                        <dt>Energy effect</dt>
+                        <dd>{energyEffectText(building.energyEffect.current)} → {energyEffectText(building.energyEffect.next)}</dd>
+                      </div>
+                      <div>
+                        <dt>Upgrade duration</dt>
+                        <dd>{formatDuration(building.constructionDurationSeconds)}</dd>
+                      </div>
+                    </dl>
+                    <div className="building-costs" aria-label={`Upgrade cost for ${building.name}`}>
+                      <span className="resource-alloy">{formatNumber(building.upgradeCost.alloy)} Alloy</span>
+                      <span className="resource-heliox">{formatNumber(building.upgradeCost.heliox)} Heliox</span>
+                      <span className="resource-aether">{formatNumber(building.upgradeCost.aether)} Aether</span>
+                    </div>
+                    {unavailableText ? (
+                      <p className="building-unavailable" role="status">{unavailableText}</p>
+                    ) : (
+                      <p className="building-available">Ready for construction.</p>
+                    )}
+                    {building.unavailableReasonCode === 'INSUFFICIENT_ENERGY' ? (
+                      <button type="button" className="energy-action" onClick={() => selectCategory('energy')}>
+                        View energy facilities
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => enqueue(building.key)}
+                      disabled={actionPending || !building.canConstruct}
+                      aria-describedby={unavailableText ? `building-reason-${building.id}` : undefined}
+                    >
+                      {busyKey === building.key ? 'Queueing...' : `Upgrade to level ${building.nextLevel}`}
+                    </button>
+                    {unavailableText ? (
+                      <span id={`building-reason-${building.id}`} className="visually-hidden">{unavailableText}</span>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         </>
       ) : null}
     </section>

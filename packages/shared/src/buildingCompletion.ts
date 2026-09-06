@@ -1,5 +1,5 @@
-import { BASE_ENERGY_SUPPLY, BUILDINGS } from './constants';
-import { buildingEnergy, calculatePlanetProduction, storageCapacity } from './formulas';
+import { BUILDINGS } from './constants';
+import { calculatePlanetEnergy, calculatePlanetProduction, storageCapacity } from './formulas';
 import { BuildingKey, PlanetEnvironment, ResourceAmounts } from './types';
 
 export const BUILD_COMPLETION_JOB_NAME = 'complete-building';
@@ -78,15 +78,7 @@ function settleProduction(
   economySpeed: number,
   preserveExistingMinimum = false,
 ): ProductionState {
-  let energySupply = BASE_ENERGY_SUPPLY;
-  let energyDemand = 0;
-  for (const [key, level] of Object.entries(buildingLevels)) {
-    const definition = BUILDINGS[key as BuildingKey];
-    if (!definition) continue;
-    const energy = buildingEnergy(definition.key, level, planet.environment.solarIndex);
-    if (energy >= 0) energyDemand += energy;
-    else energySupply += -energy;
-  }
+  const energy = calculatePlanetEnergy(buildingLevels, planet.environment.solarIndex);
 
   const production = calculatePlanetProduction({
     previousProductionAt: state.lastProductionAt,
@@ -99,8 +91,8 @@ function settleProduction(
       heliox: storageCapacity(buildingLevels.helioxStorage ?? 0),
       aether: storageCapacity(buildingLevels.aetherStorage ?? 0),
     },
-    energySupply,
-    energyDemand,
+    energySupply: energy.supply,
+    energyDemand: energy.demand,
     economySpeed,
     // Research production bonuses remain deliberately deferred from Stage 3A.
     productionModifier: 1,

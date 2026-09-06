@@ -3,10 +3,10 @@ import {
   BUILDINGS,
   BuildingKey,
   PLANET_TYPES,
-  buildingEnergy,
+  calculatePlanetEnergy,
   calculatePlanetProduction,
   storageCapacity,
-  BASE_ENERGY_SUPPLY,
+  PlanetEnergyState,
   ResourceAmounts,
 } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
@@ -26,11 +26,7 @@ export const PLANET_TYPE_DB_TO_SHARED: Record<string, PlanetTypeLower> = {
 
 export const PLANET_SYNC_TRANSACTION_ATTEMPTS = 3;
 
-export interface PlanetEnergyInfo {
-  supply: number;
-  consumption: number;
-  efficiency: number;
-}
+export type PlanetEnergyInfo = PlanetEnergyState;
 
 type PlanetTransaction = Prisma.TransactionClient;
 type LockedPlanetOperation<T> = (tx: PlanetTransaction, planet: Planet) => Promise<T>;
@@ -61,21 +57,14 @@ export async function syncLockedPlanetResources(
   const buildings = await tx.building.findMany({ where: { planetId: planet.id } });
   const byKey = new Map(buildings.map((building) => [building.key, building.level]));
 
-  let energyConsumption = 0;
-  let energyProduced = BASE_ENERGY_SUPPLY;
-  for (const building of buildings) {
-    const definition = BUILDINGS[building.key as BuildingKey];
-    if (!definition) continue;
-    const energy = buildingEnergy(definition.key, building.level, planet.solarIndex);
-    if (energy >= 0) energyConsumption += energy;
-    else energyProduced += -energy;
-  }
+  const buildingLevels = Object.fromEntries(byKey) as Partial<Record<BuildingKey, number>>;
+  const energy = calculatePlanetEnergy(buildingLevels, planet.solarIndex);
 
   const production = calculatePlanetProduction({
     previousProductionAt: planet.lastProductionAt,
     currentTime,
     resources: { alloy: planet.alloy, heliox: planet.heliox, aether: planet.aether },
-    buildingLevels: Object.fromEntries(byKey) as Partial<Record<BuildingKey, number>>,
+    buildingLevels,
     environment: {
       type: PLANET_TYPE_DB_TO_SHARED[planet.planetType] ?? 'temperate',
       temperature: planet.temperature,
@@ -86,8 +75,8 @@ export async function syncLockedPlanetResources(
       heliox: storageCapacity(byKey.get('helioxStorage') ?? 0),
       aether: storageCapacity(byKey.get('aetherStorage') ?? 0),
     },
-    energySupply: energyProduced,
-    energyDemand: energyConsumption,
+    energySupply: energy.supply,
+    energyDemand: energy.demand,
     economySpeed,
     // Research production bonuses are advertised but not wired today;
     // Stage 3A deliberately preserves the existing modifier of 1.
@@ -112,11 +101,7 @@ export async function syncLockedPlanetResources(
   return {
     planet: updated,
     buildings,
-    energy: {
-      supply: energyProduced,
-      consumption: energyConsumption,
-      efficiency: production.energyEfficiency,
-    },
+    energy,
     production: production.hourlyRates,
   };
 }

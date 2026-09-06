@@ -14,6 +14,24 @@ An original differentiating mechanic, **Eon Gates**, lets players who recover en
 from exploration missions activate ancient gateways and link two of their own planets for
 near-instant fleet travel between them.
 
+## Local quick start
+
+Install Node.js 20 or newer, Docker, and Docker Compose, then run this command from the repository
+root:
+
+```bash
+npm run start:local
+```
+
+For a beginner-friendly browser walkthrough, administrator setup, safe restart instructions and the
+full manual/automated test checklist, see the [local testing guide](docs/local-testing.md).
+
+The launcher checks Docker and the daemon, starts Docker Desktop on macOS when it is installed but
+not running, validates the resolved Compose topology, builds the application images, and starts the
+complete stack. It waits for all six services to be healthy, preserves existing Eon Rover volumes,
+and finishes by printing the authoritative URLs for the current run. If a preferred loopback port
+is occupied, it leaves the owner alone and selects a bounded fallback.
+
 ## Architecture
 
 This is an npm-workspaces monorepo:
@@ -29,17 +47,13 @@ Data flows through PostgreSQL (via Prisma) for persistent state and Redis (via B
 timed/queued events, so server-authoritative timers keep progressing even while players are
 offline. Mailpit provides a local SMTP sink for verification and password-reset emails.
 
-## Prerequisites
-
-* [Docker](https://www.docker.com/) and Docker Compose, **or**
-* Node.js 20+, a local PostgreSQL 16 instance and a local Redis 7 instance for running the apps directly.
-
 ## Local development with Docker Compose
 
-`docker-compose.yml` is a local-development stack. It is not a production deployment template.
+`docker-compose.yml` is a local-development stack, not a production deployment template. The
+recommended entry point is `npm run start:local`. To use Compose directly with fixed ports instead:
 
 ```bash
-cp .env.example .env
+if [ -e .env ]; then echo '.env already exists; left unchanged.'; else cp .env.example .env; fi
 # Edit .env if you want different credentials; the defaults work out of the box.
 docker compose up --build
 ```
@@ -56,7 +70,34 @@ Once every service reports healthy:
 * API: <http://localhost:4000> (`/healthz` for liveness and `/readyz` for readiness)
 * Mailpit web UI (view outbound verification/reset emails): <http://localhost:8025>
 
-Stop everything with `docker compose down` (add `-v` to also drop the database/redis volumes).
+For a normal volume-preserving stop, use `npm run stop:local`.
+
+### One-command clean start and full test
+
+To discard the local Eon Rover Docker data, run the complete supported verification suite, and
+leave a freshly built development stack running:
+
+```bash
+npm run test:reset
+```
+
+This command targets only the fixed `eonrovercom` Compose project. It removes that project's
+containers, network, and PostgreSQL/Redis/Mailpit volumes; it does not stop or remove resources
+belonging to other Docker projects. It then installs the locked npm dependencies, starts clean
+infrastructure, creates and migrates an isolated `eonrover_automation_test` database, runs all unit
+and integration tests (generating Prisma Client first), builds every workspace, checks the diff,
+runs the disposable full-stack restart verification, and starts the normal Eon Rover stack for
+manual testing.
+
+To inspect the workflow without changing Docker or installing anything, use:
+
+```bash
+npm run test:reset -- --dry-run
+```
+
+Use `--skip-install` after the final `--` when the locked dependencies are already installed. The
+command intentionally does not run `npm run lint`; the repository's known ESLint 9 configuration
+failure remains a separate issue.
 
 ## Local development (without Docker)
 
@@ -160,7 +201,7 @@ If `eonrover_test` already exists, the second command can be skipped. Export the
 explicit reset opt-in in the shell that will run migrations and tests:
 
 ```bash
-export TEST_DATABASE_URL='postgresql://eonrover:eonrover_dev_password@localhost:5432/eonrover_test'
+export TEST_DATABASE_URL='<your dedicated local PostgreSQL URL ending in /eonrover_test>'
 export ALLOW_TEST_DATABASE_RESET=1
 ```
 

@@ -18,7 +18,7 @@ Each stage below is intentionally narrow, ordered, and independently testable. A
 
 ## Implementation status — trusted vertical slice
 
-The local 2026-09-05 checkpoint completes the narrowed Stage 0–4B execution plan:
+The trusted slice is complete through the Stage 5A energy-aware building milestone:
 
 | Execution stage | Status | Implemented outcome |
 | --- | --- | --- |
@@ -29,8 +29,9 @@ The local 2026-09-05 checkpoint completes the narrowed Stage 0–4B execution pl
 | Stages 3B1–3B2 | Complete | One building start/cancellation is atomic; completion is transactional, time-segmented, idempotent, API-fallback capable, and reconciled from PostgreSQL. |
 | Stage 4A | Complete | An opt-in project-scoped six-service harness proves the player slice, full-stack restart persistence, redaction, and cleanup. |
 | Stage 4B | Complete | Admin-only bounded search and audited, explicit, read-only authoritative player/planet inspection are connected and verified. |
+| Stage 5A | Complete | A central pure energy model now drives authoritative projections, hard in-transaction demand gating, category metadata, a presentation-safe building API, and the responsive planetary-development interface. |
 
-This execution numbering narrows the original roadmap: Stage 4A covers the vertical-slice portion of original Stage 5, and Stage 4B covers the protected read-only inspection portion of original Stage 6. Broader original Stage 5/6 criteria—forced-termination/Redis-loss matrices, backup/restore rehearsal, dependency-readiness UI, browser viewport/accessibility coverage, and existing mutation cleanup—remain future work and are not claimed by this checkpoint. Original Stages 7–14 are unstarted.
+This execution numbering narrows the original roadmap: Stage 4A covers the vertical-slice portion of original Stage 5, Stage 4B covers the protected read-only inspection portion of original Stage 6, and the separately commissioned Stage 5A hardens the single-building experience before a general ordered queue. Broader original Stage 5/6 criteria—forced-termination/Redis-loss matrices, backup/restore rehearsal, dependency-readiness UI, and existing mutation cleanup—remain future work and are not claimed by this milestone. Original Stages 7–14 are unstarted except for the explicitly bounded energy/categorisation work in Stage 5A.
 
 ## Stage 0 — make verification safe and repeatable
 
@@ -444,9 +445,9 @@ Do not proceed to the systems below until all of these are true:
 
 **Decisions before implementation:** Hosting target, expected concurrency/data retention, observability provider/budget, accessibility conformance target, and visual direction. Do not add infrastructure until these concrete requirements demand it.
 
-## Current checkpoint and next work
+## Current milestone and next work
 
-The trusted vertical slice is implemented through Stage 4B. This checkpoint deliberately stops there; the next implementation stage must be selected separately rather than inferred from this commit.
+The trusted vertical slice is implemented through Stage 5A. The single active building path now has hard, authoritative energy-capacity gating and a categorised interface; general ordered queues and broader systems remain separately selected future work.
 
 ## Decisions needed from the project owner
 

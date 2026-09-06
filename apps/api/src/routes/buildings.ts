@@ -2,17 +2,28 @@ import { Router } from 'express';
 import { z } from 'zod';
 import {
   BUILD_COMPLETION_JOB_NAME,
+  BUILDING_CATEGORIES,
   BUILDINGS,
+  RESEARCH,
   BuildingKey,
   buildCompletionJobId,
   buildingCost,
   buildingDurationSeconds,
+  buildingEnergy,
+  hourlyProduction,
+  planetProductionMultiplier,
+  projectBuildingEnergy,
   storageCapacity,
 } from '@eonrover/shared';
 import type { BuildQueueItem } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
-import { syncLockedPlanetResources, syncPlanetResources, withLockedPlanet } from '../services/planetService';
+import {
+  PLANET_TYPE_DB_TO_SHARED,
+  syncLockedPlanetResources,
+  syncPlanetResources,
+  withLockedPlanet,
+} from '../services/planetService';
 import { requirementsMet } from '../services/requirements';
 import { buildQueue } from '../lib/redis';
 import { AppError, asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
@@ -28,6 +39,130 @@ async function assertOwnedPlanet(planetId: string, userId: string) {
   return planet;
 }
 
+function presentQueueItem(item: BuildQueueItem) {
+  return {
+    id: item.id,
+    buildingKey: item.buildingKey,
+    buildingName: BUILDINGS[item.buildingKey as BuildingKey]?.name ?? item.buildingKey,
+    targetLevel: item.targetLevel,
+    costAlloy: item.costAlloy,
+    costHeliox: item.costHeliox,
+    costAether: item.costAether,
+    startedAt: item.startedAt,
+    completesAt: item.completesAt,
+    status: item.status,
+    cancellation: {
+      refundPercentage: 50,
+      refund: {
+        alloy: Math.round(item.costAlloy * 0.5),
+        heliox: Math.round(item.costHeliox * 0.5),
+        aether: Math.round(item.costAether * 0.5),
+      },
+    },
+  };
+}
+
+function presentPlanetResources(planet: {
+  alloy: number;
+  heliox: number;
+  aether: number;
+  lastProductionAt: Date;
+}) {
+  return {
+    alloy: planet.alloy,
+    heliox: planet.heliox,
+    aether: planet.aether,
+    lastProductionAt: planet.lastProductionAt,
+  };
+}
+
+function buildingEffect(
+  key: BuildingKey,
+  currentLevel: number,
+  nextLevel: number,
+  solarIndex: number,
+  economySpeed: number,
+  planetType: string,
+  currentProduction: { alloy: number; heliox: number; aether: number },
+  projectedProductionEfficiency: number,
+) {
+  const definition = BUILDINGS[key];
+  if (definition.producesResource) {
+    const multiplier = planetProductionMultiplier(
+      {
+        type: PLANET_TYPE_DB_TO_SHARED[planetType] ?? 'temperate',
+        temperature: 0,
+        solarIndex,
+      },
+      definition.producesResource,
+    );
+    return {
+      kind: 'resource-production',
+      label: `${definition.producesResource[0].toUpperCase()}${definition.producesResource.slice(1)} output`,
+      unit: 'per hour',
+      current: currentProduction[definition.producesResource],
+      next:
+        hourlyProduction(key as 'alloyMine' | 'helioxExtractor' | 'aetherSynthesizer', nextLevel, multiplier, economySpeed) *
+        projectedProductionEfficiency,
+    };
+  }
+
+  const storageResource =
+    key === 'alloyStorage' ? 'Alloy' : key === 'helioxStorage' ? 'Heliox' : key === 'aetherStorage' ? 'Aether' : null;
+  if (storageResource) {
+    return {
+      kind: 'storage-capacity',
+      label: `${storageResource} capacity`,
+      unit: 'stored',
+      current: storageCapacity(currentLevel),
+      next: storageCapacity(nextLevel),
+    };
+  }
+
+  if (key === 'solarArray') {
+    return {
+      kind: 'energy-generation',
+      label: 'Grid generation',
+      unit: 'energy',
+      current: Math.max(0, -buildingEnergy(key, currentLevel, solarIndex)),
+      next: Math.max(0, -buildingEnergy(key, nextLevel, solarIndex)),
+    };
+  }
+  if (key === 'researchLab') {
+    return {
+      kind: 'construction-support',
+      label: 'Construction acceleration',
+      unit: 'speed factor',
+      current: currentLevel + 1,
+      next: nextLevel + 1,
+    };
+  }
+  if (key === 'shipyard') {
+    return {
+      kind: 'shipbuilding',
+      label: 'Shipbuilding speed',
+      unit: 'speed factor',
+      current: Math.max(1, Math.log2(currentLevel + 2)),
+      next: Math.max(1, Math.log2(nextLevel + 2)),
+    };
+  }
+  return {
+    kind: 'facility-capability',
+    label: 'Facility capability',
+    unit: 'level',
+    current: currentLevel,
+    next: nextLevel,
+  };
+}
+
+function energyEffect(key: BuildingKey, level: number, solarIndex: number) {
+  const value = buildingEnergy(key, level, solarIndex);
+  return {
+    kind: value < 0 ? ('supply' as const) : value > 0 ? ('demand' as const) : ('none' as const),
+    amount: Math.abs(value),
+  };
+}
+
 router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) {
@@ -36,17 +171,117 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   }
   const currentTime = new Date();
   const synced = await syncPlanetResources(planet.id, currentTime);
-  const levels = Object.fromEntries(synced.buildings.map((building) => [building.key, building.level]));
-  const catalog = Object.values(BUILDINGS).map((def) => ({
-    ...def,
-    level: levels[def.key] ?? 0,
-    nextCost: buildingCost(def.key, (levels[def.key] ?? 0) + 1),
-  }));
-  const pending = await prisma.buildQueueItem.findMany({ where: { planetId: planet.id, status: 'PENDING' } });
+  const levels = Object.fromEntries(
+    synced.buildings.map((building) => [building.key, building.level]),
+  ) as Partial<Record<BuildingKey, number>>;
+  const [pending, research, config] = await Promise.all([
+    prisma.buildQueueItem.findMany({
+      where: { planetId: planet.id, status: 'PENDING' },
+      orderBy: [{ completesAt: 'asc' }, { id: 'asc' }],
+    }),
+    prisma.research.findMany({ where: { userId: req.user!.id } }),
+    getUniverseConfig(),
+  ]);
+  const researchLevels = Object.fromEntries(research.map((item) => [item.key, item.level]));
+  const hasActiveConstruction = pending.length > 0;
+  const catalog = Object.values(BUILDINGS).map((definition) => {
+    const currentLevel = levels[definition.key] ?? 0;
+    const nextLevel = currentLevel + 1;
+    const upgradeCost = buildingCost(definition.key, nextLevel);
+    const projection = projectBuildingEnergy(levels, synced.planet.solarIndex, definition.key, nextLevel);
+    const requirements = Object.entries(definition.requires ?? {}).map(([key, requiredLevel]) => {
+      const currentRequirementLevel = levels[key as BuildingKey] ?? researchLevels[key] ?? 0;
+      return {
+        key,
+        name: BUILDINGS[key as BuildingKey]?.name ?? RESEARCH[key as keyof typeof RESEARCH]?.name ?? key,
+        currentLevel: currentRequirementLevel,
+        requiredLevel: requiredLevel ?? 0,
+        met: currentRequirementLevel >= (requiredLevel ?? 0),
+      };
+    });
+    const meetsPrerequisites = requirements.every((requirement) => requirement.met);
+    const missingResources = {
+      alloy: Math.max(0, upgradeCost.alloy - synced.planet.alloy),
+      heliox: Math.max(0, upgradeCost.heliox - synced.planet.heliox),
+      aether: Math.max(0, upgradeCost.aether - synced.planet.aether),
+    };
+    const affordable = Object.values(missingResources).every((amount) => amount === 0);
+    let unavailableReasonCode: string | null = null;
+    let unavailableReason: string | null = null;
+    if (hasActiveConstruction) {
+      unavailableReasonCode = ERROR_CODES.CONSTRUCTION_IN_PROGRESS;
+      unavailableReason = 'Another building upgrade is already active.';
+    } else if (!meetsPrerequisites) {
+      unavailableReasonCode = 'PREREQUISITES_NOT_MET';
+      unavailableReason = `Requires ${requirements
+        .filter((requirement) => !requirement.met)
+        .map((requirement) => `${requirement.name} ${requirement.requiredLevel}`)
+        .join(', ')}.`;
+    } else if (!projection.energyRequirementMet) {
+      unavailableReasonCode = ERROR_CODES.INSUFFICIENT_ENERGY;
+      unavailableReason = `Requires ${Number(projection.shortfall.toFixed(2))} more energy.`;
+    } else if (!affordable) {
+      unavailableReasonCode = ERROR_CODES.INSUFFICIENT_RESOURCES;
+      unavailableReason = 'Insufficient resources for this upgrade.';
+    }
+
+    return {
+      id: definition.key,
+      key: definition.key,
+      name: definition.name,
+      category: definition.category,
+      description: definition.description,
+      currentLevel,
+      level: currentLevel,
+      nextLevel,
+      upgradeCost,
+      nextCost: upgradeCost,
+      constructionDurationSeconds: buildingDurationSeconds(
+        upgradeCost,
+        levels.researchLab ?? 0,
+        config.economySpeed,
+      ),
+      effect: buildingEffect(
+        definition.key,
+        currentLevel,
+        nextLevel,
+        synced.planet.solarIndex,
+        config.economySpeed,
+        synced.planet.planetType,
+        synced.production,
+        projection.projectedProductionEfficiency,
+      ),
+      energyEffect: {
+        current: energyEffect(definition.key, currentLevel, synced.planet.solarIndex),
+        next: energyEffect(definition.key, nextLevel, synced.planet.solarIndex),
+      },
+      energyProjection: {
+        supply: projection.supply,
+        currentDemand: projection.demand,
+        projectedSupply: projection.projectedSupply,
+        projectedDemand: projection.projectedDemand,
+        projectedAvailable: projection.projectedAvailable,
+        additionalRequired: projection.additionalEnergyRequired,
+        shortfall: projection.shortfall,
+      },
+      requirements,
+      meetsPrerequisites,
+      missingResources,
+      affordable,
+      hasSufficientEnergy: projection.hasSufficientEnergy,
+      energyRequirementMet: projection.energyRequirementMet,
+      canConstruct: unavailableReasonCode === null,
+      unavailableReasonCode,
+      unavailableReason,
+    };
+  });
   res.json({
+    categories: BUILDING_CATEGORIES.filter((category) =>
+      catalog.some((building) => building.category === category.key),
+    ),
     catalog,
-    queue: pending,
-    planet: synced.planet,
+    queue: pending.map(presentQueueItem),
+    planet: presentPlanetResources(synced.planet),
     energy: synced.energy,
     production: synced.production,
     storage: {
@@ -108,7 +343,6 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
       throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     }
 
-    const synced = await syncLockedPlanetResources(tx, lockedPlanet, startedAt, config.economySpeed);
     const pending = await tx.buildQueueItem.findFirst({
       where: { planetId: lockedPlanet.id, status: 'PENDING' },
       select: { id: true },
@@ -118,7 +352,10 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
 
     const key = requestedKey as BuildingKey;
 
-    const buildingLevels = Object.fromEntries(synced.buildings.map((building) => [building.key, building.level]));
+    const buildings = await tx.building.findMany({ where: { planetId: lockedPlanet.id } });
+    const buildingLevels = Object.fromEntries(
+      buildings.map((building) => [building.key, building.level]),
+    ) as Partial<Record<BuildingKey, number>>;
     const research = await tx.research.findMany({ where: { userId: ownerId } });
     const researchLevels = Object.fromEntries(research.map((item) => [item.key, item.level]));
     const targetLevel = (buildingLevels[key] ?? 0) + 1;
@@ -126,6 +363,21 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     if (!requirementsMet(definition.requires, buildingLevels, researchLevels)) {
       return { kind: 'requirements' as const };
     }
+
+    const energy = projectBuildingEnergy(buildingLevels, lockedPlanet.solarIndex, key, targetLevel);
+    if (!energy.energyRequirementMet) {
+      return {
+        kind: 'insufficient-energy' as const,
+        details: {
+          supply: energy.supply,
+          currentDemand: energy.demand,
+          projectedDemand: energy.projectedDemand,
+          shortfall: energy.shortfall,
+        },
+      };
+    }
+
+    const synced = await syncLockedPlanetResources(tx, lockedPlanet, startedAt, config.economySpeed);
 
     const cost = buildingCost(key, targetLevel);
     if (
@@ -183,15 +435,23 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     sendError(res, 409, ERROR_CODES.CONFLICT, 'Requirements not met');
     return;
   }
+  if (outcome.kind === 'insufficient-energy') {
+    sendError(
+      res,
+      409,
+      ERROR_CODES.INSUFFICIENT_ENERGY,
+      'Insufficient energy capacity for this upgrade.',
+      outcome.details,
+    );
+    return;
+  }
   if (outcome.kind === 'insufficient') {
     sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources', { cost: outcome.cost });
     return;
   }
 
-  const scheduledJobId = await scheduleBuildCompletion(outcome.item);
-  res.status(201).json({
-    queueItem: scheduledJobId ? { ...outcome.item, jobId: scheduledJobId } : outcome.item,
-  });
+  await scheduleBuildCompletion(outcome.item);
+  res.status(201).json({ queueItem: presentQueueItem(outcome.item) });
 }));
 
 router.delete<{ planetId: string; queueItemId: string }>('/:queueItemId', asyncHandler(async (req, res) => {

@@ -1,4 +1,34 @@
-import { BuildingKey, DefenceKey, PlanetType, ResearchKey, ResourceAmounts, ShipKey } from './types';
+import {
+  BuildingCategory,
+  BuildingKey,
+  DefenceKey,
+  PlanetType,
+  ResearchKey,
+  ResourceAmounts,
+  ShipKey,
+} from './types';
+
+export const BUILDING_CATEGORIES: ReadonlyArray<{
+  key: BuildingCategory;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'resources',
+    label: 'Resources',
+    description: 'Production and storage for Alloy, Heliox and Aether.',
+  },
+  {
+    key: 'energy',
+    label: 'Energy',
+    description: 'Generation facilities that supply the planetary grid.',
+  },
+  {
+    key: 'infrastructure',
+    label: 'Infrastructure',
+    description: 'Planetary facilities that support construction, research and shipbuilding.',
+  },
+];
 
 /**
  * Base definitions for buildings. Costs are for level 1 -> the formulas in
@@ -7,6 +37,7 @@ import { BuildingKey, DefenceKey, PlanetType, ResearchKey, ResourceAmounts, Ship
 export interface BuildingDefinition {
   key: BuildingKey;
   name: string;
+  category: BuildingCategory;
   description: string;
   baseCost: ResourceAmounts;
   costGrowth: number;
@@ -20,6 +51,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   alloyMine: {
     key: 'alloyMine',
     name: 'Alloy Mine',
+    category: 'resources',
     description: 'Extracts and refines Alloy from the planet crust.',
     baseCost: { alloy: 60, heliox: 15, aether: 0 },
     costGrowth: 1.5,
@@ -29,6 +61,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   helioxExtractor: {
     key: 'helioxExtractor',
     name: 'Heliox Extractor',
+    category: 'resources',
     description: 'Condenses atmospheric Heliox for propulsion and energy use.',
     baseCost: { alloy: 48, heliox: 24, aether: 0 },
     costGrowth: 1.5,
@@ -38,6 +71,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   aetherSynthesizer: {
     key: 'aetherSynthesizer',
     name: 'Aether Synthesizer',
+    category: 'resources',
     description: 'Synthesises trace Aether particles for advanced research.',
     baseCost: { alloy: 200, heliox: 150, aether: 0 },
     costGrowth: 1.6,
@@ -48,6 +82,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   solarArray: {
     key: 'solarArray',
     name: 'Solar Array',
+    category: 'energy',
     description: 'Converts starlight into usable energy for the planet grid.',
     baseCost: { alloy: 75, heliox: 30, aether: 0 },
     costGrowth: 1.5,
@@ -56,6 +91,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   alloyStorage: {
     key: 'alloyStorage',
     name: 'Alloy Depot',
+    category: 'resources',
     description: 'Increases maximum Alloy storage capacity.',
     baseCost: { alloy: 500, heliox: 0, aether: 0 },
     costGrowth: 2,
@@ -64,6 +100,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   helioxStorage: {
     key: 'helioxStorage',
     name: 'Heliox Tank',
+    category: 'resources',
     description: 'Increases maximum Heliox storage capacity.',
     baseCost: { alloy: 500, heliox: 250, aether: 0 },
     costGrowth: 2,
@@ -72,6 +109,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   aetherStorage: {
     key: 'aetherStorage',
     name: 'Aether Vault',
+    category: 'resources',
     description: 'Increases maximum Aether storage capacity.',
     baseCost: { alloy: 800, heliox: 400, aether: 100 },
     costGrowth: 2,
@@ -81,6 +119,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   shipyard: {
     key: 'shipyard',
     name: 'Shipyard',
+    category: 'infrastructure',
     description: 'Constructs ships and defensive structures.',
     baseCost: { alloy: 400, heliox: 200, aether: 100 },
     costGrowth: 1.6,
@@ -90,6 +129,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   researchLab: {
     key: 'researchLab',
     name: 'Research Lab',
+    category: 'infrastructure',
     description: 'Unlocks and accelerates technology research.',
     baseCost: { alloy: 250, heliox: 400, aether: 100 },
     costGrowth: 1.7,
@@ -98,6 +138,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
   gateObservatory: {
     key: 'gateObservatory',
     name: 'Gate Observatory',
+    category: 'infrastructure',
     description: 'Detects and stabilises Eon Gate fragments for research and use.',
     baseCost: { alloy: 1200, heliox: 900, aether: 500 },
     costGrowth: 1.8,

@@ -1,4 +1,5 @@
 export type ResourceType = 'alloy' | 'heliox' | 'aether';
+export type BuildingCategory = 'resources' | 'energy' | 'infrastructure';
 export interface ResourceAmounts {
     alloy: number;
     heliox: number;

@@ -27,6 +27,7 @@ interface PlanetOptions {
   aetherSynthesizerLevel?: number;
   solarArrayLevel?: number;
   researchLabLevel?: number;
+  solarIndex?: number;
 }
 
 beforeEach(() => {
@@ -82,7 +83,7 @@ async function createPlanet(options: PlanetOptions) {
       slot: coordinate++,
       planetType: 'TEMPERATE',
       temperature: 10,
-      solarIndex: 0.7,
+      solarIndex: options.solarIndex ?? 0.7,
       alloy: options.alloy ?? 1_000,
       heliox: options.heliox ?? 1_000,
       aether: options.aether ?? 1_000,
@@ -158,13 +159,13 @@ describe('atomic building construction start', () => {
     const response = await startConstruction(cookie, planet.id).expect(201);
 
     expect(response.body.queueItem).toMatchObject({
-      planetId: planet.id,
       buildingKey: 'alloyMine',
       targetLevel: 2,
       costAlloy: 90,
       costHeliox: 23,
       costAether: 0,
     });
+    expect(response.body.queueItem).not.toHaveProperty('planetId');
     const persisted = await prisma.planet.findUniqueOrThrow({ where: { id: planet.id } });
     expect(persisted.alloy).toBe(443);
     expect(persisted.heliox).toBe(299);
@@ -175,7 +176,7 @@ describe('atomic building construction start', () => {
 
   it('targets exactly the completed level plus one and ignores old terminal queue targets', async () => {
     const { user, cookie } = await createPlayer('level-builder@example.com', 'level-builder');
-    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 3 });
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 3, solarArrayLevel: 1 });
     await prisma.buildQueueItem.create({
       data: {
         planetId: planet.id,
@@ -242,6 +243,140 @@ describe('atomic building construction start', () => {
       heliox: 285,
       aether: 0,
     });
+  });
+
+  it('allows an upgrade within available energy capacity', async () => {
+    const { user, cookie } = await createPlayer('capacity-builder@example.com', 'capacity-builder');
+    const planet = await createPlanet({ ownerId: user.id, solarArrayLevel: 1 });
+
+    const response = await startConstruction(cookie, planet.id).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'alloyMine', targetLevel: 1 });
+    expect(addJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows an upgrade that reaches exact energy capacity', async () => {
+    const { user, cookie } = await createPlayer('exact-capacity@example.com', 'exact-capacity');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 1, solarArrayLevel: 0 });
+
+    const response = await startConstruction(cookie, planet.id).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'alloyMine', targetLevel: 2 });
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(1);
+  });
+
+  it('rejects an upgrade beyond capacity without changing resources, timestamps, rows, or jobs', async () => {
+    const { user, cookie } = await createPlayer('energy-blocked@example.com', 'energy-blocked');
+    const previousProductionAt = new Date(NOW.getTime() - 60 * 60 * 1000);
+    const planet = await createPlanet({
+      ownerId: user.id,
+      alloy: 500,
+      heliox: 300,
+      aether: 0,
+      alloyMineLevel: 2,
+      solarArrayLevel: 0,
+      lastProductionAt: previousProductionAt,
+    });
+
+    const response = await startConstruction(cookie, planet.id).expect(409);
+
+    expect(response.body).toEqual({
+      error: 'Insufficient energy capacity for this upgrade.',
+      code: 'INSUFFICIENT_ENERGY',
+      details: {
+        supply: 20,
+        currentDemand: 20,
+        projectedDemand: 30,
+        shortfall: 10,
+      },
+    });
+    const persisted = await prisma.planet.findUniqueOrThrow({ where: { id: planet.id } });
+    expect({ alloy: persisted.alloy, heliox: persisted.heliox, aether: persisted.aether }).toEqual({
+      alloy: 500,
+      heliox: 300,
+      aether: 0,
+    });
+    expect(persisted.lastProductionAt).toEqual(previousProductionAt);
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('allows an energy-generating upgrade during an existing deficit', async () => {
+    const { user, cookie } = await createPlayer('deficit-generator@example.com', 'deficit-generator');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 4, solarArrayLevel: 0 });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'solarArray' }).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'solarArray', targetLevel: 1 });
+  });
+
+  it('allows a zero-demand facility during an existing deficit', async () => {
+    const { user, cookie } = await createPlayer('deficit-facility@example.com', 'deficit-facility');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 3, solarArrayLevel: 0 });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'researchLab' }).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'researchLab', targetLevel: 1 });
+  });
+
+  it('ignores client-supplied energy totals and projections', async () => {
+    const { user, cookie } = await createPlayer('untrusted-energy@example.com', 'untrusted-energy');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 2, solarArrayLevel: 0 });
+
+    const response = await startConstruction(cookie, planet.id, {
+      key: 'alloyMine',
+      energy: { supply: 999_999, demand: 0 },
+      projectedSupply: 999_999,
+      projectedDemand: 0,
+      shortfall: 0,
+    }).expect(409);
+
+    expect(response.body.code).toBe('INSUFFICIENT_ENERGY');
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('does not allow concurrent requests to bypass the energy gate', async () => {
+    const { user, cookie } = await createPlayer('concurrent-energy@example.com', 'concurrent-energy');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 2, solarArrayLevel: 0 });
+
+    const responses = await Promise.all([
+      startConstruction(cookie, planet.id),
+      startConstruction(cookie, planet.id),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([409, 409]);
+    expect(responses.every((response) => response.body.code === 'INSUFFICIENT_ENERGY')).toBe(true);
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('settles an overdue generator before projecting the requested upgrade', async () => {
+    const { user, cookie } = await createPlayer('overdue-energy@example.com', 'overdue-energy');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 2, solarArrayLevel: 0 });
+    const overdue = await prisma.buildQueueItem.create({
+      data: {
+        planetId: planet.id,
+        buildingKey: 'solarArray',
+        targetLevel: 1,
+        costAlloy: 75,
+        costHeliox: 30,
+        costAether: 0,
+        startedAt: new Date(NOW.getTime() - 120_000),
+        completesAt: new Date(NOW.getTime() - 60_000),
+        status: 'PENDING',
+      },
+    });
+
+    const response = await startConstruction(cookie, planet.id).expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ buildingKey: 'alloyMine', targetLevel: 3 });
+    expect((await prisma.buildQueueItem.findUniqueOrThrow({ where: { id: overdue.id } })).status).toBe('COMPLETE');
+    expect(
+      (await prisma.building.findUniqueOrThrow({
+        where: { planetId_key: { planetId: planet.id, key: 'solarArray' } },
+      })).level,
+    ).toBe(1);
   });
 
   it('persists synchronised resources but creates no construction or deduction when unaffordable', async () => {
@@ -529,7 +664,8 @@ describe('building completion queue boundary', () => {
     const accepted = await startConstruction(cookie, planet.id).expect(201);
     await startConstruction(cookie, planet.id).expect(409);
 
-    expect(accepted.body.queueItem).toMatchObject({ status: 'PENDING', jobId: null });
+    expect(accepted.body.queueItem).toMatchObject({ status: 'PENDING' });
+    expect(accepted.body.queueItem).not.toHaveProperty('jobId');
     const items = await prisma.buildQueueItem.findMany({ where: { planetId: planet.id } });
     expect(items).toHaveLength(1);
     expect(items[0].jobId).toBeNull();

@@ -76,20 +76,101 @@ export interface PlanetFullState {
   shipyardQueue: ShipyardQueueItem[];
   energy: {
     supply: number;
-    consumption: number;
-    efficiency: number;
+    demand: number;
+    available: number;
+    utilisationPercentage: number;
+    productionEfficiency: number;
+    status: 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
   };
   storage: ResourceAmounts;
 }
 
 export interface BuildingCatalogItem {
+  id: string;
   key: string;
   name: string;
+  category: BuildingCategory;
   description: string;
-  baseEnergy: number;
+  currentLevel: number;
   level: number;
+  nextLevel: number;
+  upgradeCost: ResourceAmounts;
   nextCost: ResourceAmounts;
-  requires?: Record<string, number>;
+  constructionDurationSeconds: number;
+  effect: {
+    kind: string;
+    label: string;
+    unit: string;
+    current: number;
+    next: number;
+  };
+  energyEffect: {
+    current: BuildingEnergyEffect;
+    next: BuildingEnergyEffect;
+  };
+  energyProjection: {
+    supply: number;
+    currentDemand: number;
+    projectedSupply: number;
+    projectedDemand: number;
+    projectedAvailable: number;
+    additionalRequired: number;
+    shortfall: number;
+  };
+  requirements: Array<{
+    key: string;
+    name: string;
+    currentLevel: number;
+    requiredLevel: number;
+    met: boolean;
+  }>;
+  meetsPrerequisites: boolean;
+  missingResources: ResourceAmounts;
+  affordable: boolean;
+  hasSufficientEnergy: boolean;
+  energyRequirementMet: boolean;
+  canConstruct: boolean;
+  unavailableReasonCode: string | null;
+  unavailableReason: string | null;
+}
+
+export type BuildingCategory = 'resources' | 'energy' | 'infrastructure';
+
+export interface BuildingCategoryMetadata {
+  key: BuildingCategory;
+  label: string;
+  description: string;
+}
+
+export interface BuildingEnergyEffect {
+  kind: 'supply' | 'demand' | 'none';
+  amount: number;
+}
+
+export interface PlanetEnergySummary {
+  supply: number;
+  demand: number;
+  available: number;
+  utilisationPercentage: number;
+  productionEfficiency: number;
+  status: 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
+}
+
+export interface PresentedBuildQueueItem {
+  id: string;
+  buildingKey: string;
+  buildingName: string;
+  targetLevel: number;
+  costAlloy: number;
+  costHeliox: number;
+  costAether: number;
+  startedAt: string;
+  completesAt: string;
+  status: string;
+  cancellation: {
+    refundPercentage: number;
+    refund: ResourceAmounts;
+  };
 }
 
 export interface ResearchCatalogItem {

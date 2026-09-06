@@ -2,12 +2,13 @@
 
 ## Scope and inspection record
 
-This document was refreshed for the trusted vertical-slice checkpoint on 2026-09-05 after a complete inspection of the accumulated Stage 0–4B changes. Areas outside that slice retain the original 2026-09-04 prototype assessment unless explicitly updated below.
+This document was refreshed for the Stage 5A energy-aware building milestone on 2026-09-06. Areas outside the trusted slice retain the original 2026-09-04 prototype assessment unless explicitly updated below.
 
 - No `AGENTS.md` exists in this repository.
 - Stage 0 destructive test guards require `TEST_DATABASE_URL`, `ALLOW_TEST_DATABASE_RESET=1`, and a test-named database before cleanup can run.
 - Runtime configuration, liveness, readiness, and normalized API error boundaries are implemented for the API and worker.
 - The checkpoint verification covers the full unit/integration suite, workspace build, Compose parsing, clean migration install, and an opt-in disposable six-service restart scenario.
+- Stage 5A centralises energy/category definitions, gates new continuous demand inside the existing planet lock, and exposes a categorised, accessibility-oriented building screen without changing balance values.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this checkpoint; lint configuration was not repaired as part of Stages 0–4B.
 
@@ -15,7 +16,7 @@ The trusted registration-to-admin-inspection slice is verified against live Post
 
 ## Current application in one paragraph
 
-Eon Rover is a compact TypeScript npm-workspaces monorepo containing a Next.js browser client, an Express REST API, a PostgreSQL schema accessed through Prisma, a Redis/BullMQ timed-job layer, and a separate BullMQ worker. Its trusted vertical slice now provides atomic account/homeworld provisioning, recoverable email verification, digest-backed database sessions, row-locked timestamp production, atomic single-item building start/cancellation, PostgreSQL-authoritative idempotent completion with Redis reconciliation, restart verification, and an audited read-only administrator player-state view. Research, shipyard, fleet, social, deployment, and other advanced systems remain a broad prototype rather than production-ready gameplay.
+Eon Rover is a compact TypeScript npm-workspaces monorepo containing a Next.js browser client, an Express REST API, a PostgreSQL schema accessed through Prisma, a Redis/BullMQ timed-job layer, and a separate BullMQ worker. Its trusted vertical slice now provides atomic account/homeworld provisioning, recoverable email verification, digest-backed database sessions, row-locked timestamp production, hard server-authoritative energy gating, atomic single-item building start/cancellation, PostgreSQL-authoritative idempotent completion with Redis reconciliation, a categorised planetary-development interface, restart verification, and an audited read-only administrator player-state view. Research, shipyard, fleet, social, deployment, and other advanced systems remain a broad prototype rather than production-ready gameplay.
 
 ## Area-by-area assessment
 
@@ -29,8 +30,8 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Player account and security management | Partially implemented | The settings page shows account data, supports logout, and links to reset-password. There is no session list/revocation, in-session password change, email change, account deletion, MFA, or recovery-code flow. |
 | Planet management | Partially implemented | Registration atomically creates exactly one homeworld with a bounded coordinate-collision retry and the configured protection duration; owned planets can be listed, viewed, renamed, and created by colonisation. There is no abandon/transfer flow, field capacity, or robust colonisation-limit enforcement. |
 | Resource production and storage | Implemented for the trusted slice | `syncPlanetResources` advances elapsed server-time production under a per-planet PostgreSQL row lock, persists fractional balances/timestamps, applies energy and production storage caps, and prevents duplicate accrual under concurrent reads/spends. Research bonuses and non-production delivery/loot storage policy remain outside the slice. |
-| Buildings and construction queues | Implemented for the trusted slice | One active building item per planet is enforced. Start and cancellation settle production and atomically write costs/balances/state; completion is time-segmented, idempotent, transactional, notified once, API-fallback capable, and restored from PostgreSQL by deterministic BullMQ reconciliation. General ordered multi-item queues remain future work. |
-| Energy production and consumption | Partially implemented | Server-side supply, demand, and efficiency affect authoritative production, including exact building-completion transitions, and appear in player/admin state. There is no allocation control or history. |
+| Buildings and construction queues | Implemented for the trusted slice | One active building item per planet is enforced. Start checks requirements and projected energy under the planet lock before settlement/deduction, while cancellation and completion retain their atomic, durable behavior. The allowlisted API and categorised web interface expose costs, effects, reasons, countdown and refund information without internal job IDs. General ordered multi-item queues remain future work. |
+| Energy production and consumption | Implemented for the trusted building slice | One shared pure model calculates supply, demand, available capacity, utilisation, production efficiency and upgrade projections. Demand-increasing starts are blocked only above capacity; exact capacity is accepted, while generators and zero-demand facilities remain buildable in legacy deficits. Allocation controls and history remain future work. |
 | Research and technology progression | Partially implemented | Account-wide levels, requirements, costs, one active queue, timed completion, and a UI exist. Several stated technology effects are disconnected and completion is not recoverable/idempotent enough. |
 | Shipyard and fleet construction | Partially implemented | Ships and defences can be queued and completed one unit at a time. Multiple batches run in parallel, retry windows can duplicate units, and there is no cancellation or reconciliation. |
 | Galaxy and solar-system navigation | Partially implemented | A protected galaxy browser renders 12 slots from live data. Query/mission coordinates have no configured upper bounds, and the screen does not launch context-aware missions. |
@@ -48,10 +49,10 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Game configuration and balancing | Partially implemented | Six values are editable and stored. Economy, research, and fleet speeds are used, and registration now uses configured protection hours; `universeSpeed` and `maxPlanetsPerPlayer` remain unused. |
 | Administrative audit records | Partially implemented | Player-state detail opens and selected admin mutations call `logAudit`; safe inspection records contain no credential/token metadata. Coverage, failed-delete semantics, retention, and tamper evidence remain incomplete. |
 | Background jobs and timed events | Partially implemented | Building completion now treats PostgreSQL as authoritative, uses deterministic BullMQ wake-ups, reconciles missing/stale jobs on startup and every 30 seconds, and claims the transition idempotently. Research, shipyard, and fleet timers retain the earlier recovery/idempotency limitations. |
-| Graphics and visual assets | Placeholder | Visuals consist of CSS, a client-generated CSS starfield, the satellite emoji in navigation, and `favicon.ico`. No planet, ship, building, map, audio, or other production art inventory exists. |
+| Graphics and visual assets | Partially implemented | Visuals remain primarily CSS, the generated starfield, navigation emoji and `favicon.ico`; Stage 5A adds original inline SVG facility schematics for every existing building card. There is still no broader planet, ship, map, audio, or production-art inventory. |
 | Automated testing | Implemented for the trusted slice | Guard/unit tests and isolated PostgreSQL integration suites cover configuration, failure boundaries, auth/provisioning, production/building concurrency, completion/reconciliation, and admin RBAC/allowlists. An opt-in disposable full-stack harness proves the complete slice and restart persistence; broader UI/gameplay coverage remains incomplete. |
 | Security, validation and rate limiting | Partially implemented | bcrypt, random digest-backed sessions, hashed email-verification tokens, active-account checks on every protected request, HttpOnly/SameSite cookies, Helmet, CORS, Zod, CSRF header, normalized errors, and rate limits protect the slice. Password-reset token storage, proxy/IP policy, host-published local infrastructure, and broader abuse controls still need work. |
-| Accessibility and responsive behaviour | Partially implemented | Semantic headings/labels, focus-visible styles, `lang="en"`, flexible grids, a stacked mobile shell, and reduced-motion handling exist. There are no audits/tests, no live-region announcements, no mobile table overflow treatment, and no verified contrast/keyboard/screen-reader pass. |
+| Accessibility and responsive behaviour | Partially implemented | Semantic headings/labels, focus-visible styles, `lang="en"`, flexible grids, a stacked mobile shell, reduced-motion handling, labelled energy progress semantics, arrow-key category tabs, descriptive SVG labels and live construction countdowns exist. Broader automated audits, mobile table treatment and a complete screen-reader pass remain future work. |
 | Deployment and operational documentation | Partially implemented | Dockerfiles, local Compose, `.env.example`, separate liveness/readiness endpoints, migration-on-start, backup notes, and a disposable restart harness exist. Compose honors documented connection/health settings and supports loopback/random-port isolation, but exposed local-service defaults, unpinned images, CI/CD, TLS, monitoring, restore rehearsal, and rollback/runbooks remain future work. |
 
 ## Repository map
@@ -125,7 +126,7 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │       ├── package.json, tsconfig.json
 │       ├── src                   constants, types, pure formulas, unit tests
 │       └── dist                  tracked generated JS and declarations
-├── scripts                       disposable vertical-slice harness and safety boundary
+├── scripts                       safe local start/stop/log runners, reset runner, and disposable vertical-slice harness
 ├── test                          root safety and source-boundary tests
 └── docs
     ├── codebase-map.md
@@ -144,7 +145,7 @@ The root requires Node.js 20 or newer and uses npm workspaces (`package.json`). 
 | Data | PostgreSQL 16 Alpine, Prisma Client/CLI 5.22.0 |
 | Timers/jobs | Redis 7 Alpine, BullMQ 5.81.4, ioredis 5.11.1 |
 | Local mail | Mailpit `latest` image, SMTP on 1025 and web UI on 8025 |
-| Tests | Node test runner for root/shared tests; Jest 29, ts-jest, Supertest for isolated API/worker integration; disposable Compose vertical-slice harness |
+| Tests | Node test runner for root/shared tests; Jest 29, ts-jest, Supertest for isolated API/worker integration; tested local launcher and disposable Compose vertical-slice harness |
 | Containers | Three multi-stage Node 20 Bullseye images plus Compose-managed infrastructure |
 | Lint/build | ESLint 9 for web; API/worker scripts reference ESLint but do not declare ESLint/config locally; `tsc` for shared/API/worker |
 
@@ -200,7 +201,7 @@ All are beneath the client-guarded layout in `apps/web/src/app/(game)/game/layou
 | --- | --- |
 | `/game` | Live planet list and aggregate stored resources. |
 | `/game/planets/[planetId]` | Full owned-planet state, energy, queues, garrison, and rename. |
-| `/game/planets/[planetId]/buildings` | Authoritative resources/rates, single active construction, auto-refresh at completion, enqueue and cancel. |
+| `/game/planets/[planetId]/buildings` | Energy summary, categorised authoritative building catalog, eligibility reasons, single active construction/refund details, auto-refresh at completion, enqueue and cancel. |
 | `/game/planets/[planetId]/research` | Account research catalog and enqueue funded from route planet. |
 | `/game/planets/[planetId]/shipyard` | Ship/defence catalog and batch enqueue. |
 | `/game/planets/[planetId]/fleet` | Generic form for every mission, all account missions, and recall. |
@@ -248,8 +249,8 @@ All mutating requests pass the global custom-header check in `requireCsrfHeader`
 | `GET /api/planets` | Player | Connected; syncs and lists every owned planet. |
 | `GET /api/planets/:id` | Owning player | Connected; syncs resources and returns buildings, units, queues, energy, storage. |
 | `PATCH /api/planets/:id` | Owning player | Connected; trims and limits name to 40 characters. |
-| `GET /api/planets/:planetId/buildings` | Owning player | Connected; settles due completion/production and returns authoritative balances, rates, storage, catalog, levels, and active construction. |
-| `POST /api/planets/:planetId/buildings` | Owning player | Connected; under a planet lock enforces one active item, requirements and non-negative balance, then atomically deducts and snapshots cost before best-effort deterministic scheduling. |
+| `GET /api/planets/:planetId/buildings` | Owning player | Connected; settles due completion/production and returns allowlisted energy/category metadata, authoritative balances/rates/storage, per-building effects/projections/eligibility, and public active-construction data without queue job IDs. |
+| `POST /api/planets/:planetId/buildings` | Owning player | Connected; after due completion and under a planet lock, recomputes authoritative levels and blocks only demand-increasing upgrades whose projected demand exceeds supply, before resource settlement/deduction/row creation/scheduling. It then enforces resources and atomically snapshots accepted cost. |
 | `DELETE /api/planets/:planetId/buildings/:queueItemId` | Owning player | Connected; serializes against completion, atomically cancels and refunds 50% of the stored accepted cost, then removes Redis work best-effort. |
 | `GET /api/research` | Player | Connected; account-wide catalog and pending job. |
 | `POST /api/research` | Player owning funding planet | Connected; checks one active research, requirements/resources, deducts, records, schedules. |
@@ -356,7 +357,8 @@ Definitions live in `packages/shared/src/constants.ts`; pure calculations live i
 - Shipyard time per unit: `max(round(baseSeconds / max(1, log2(shipyardLevel+2)) / economySpeed), 10)` (`shipyardDurationSeconds`, `formulas.ts:63`).
 - Hourly production: 30/20/3 base rate for Alloy/Heliox/Aether, multiplied by `level * 1.1^level * planetTypeMultiplier * economySpeed * researchBonus` (`hourlyProduction`, `formulas.ts:79`). The caller always uses the default research bonus 1, so economy research descriptions do not affect output.
 - Storage: `round(10000 * 1.5^storageLevel)` (`storageCapacity`, `formulas.ts`). Production is capped; a storage-building completion settles the old-cap and new-cap time segments separately. Delivery, loot, and refund cap policy is not generalized yet.
-- Energy: base supply 20. Solar output is `20 * level * 1.1^level * (0.5 + solarIndex)`; other configured building energy is linear by level. Production efficiency is `min(1, supply/consumption)` (`formulas.ts:94-121`).
+- Energy: base supply is 20. Solar output is `20 * level * 1.1^level * (0.5 + solarIndex)`; other configured building energy is linear by level. `available = supply - demand`, utilisation is `100 * demand / supply`, and legacy-deficit production efficiency is `min(1, supply / demand)`. An upgrade that adds continuous demand is accepted when `projectedDemand <= projectedSupply`; generator and zero-demand upgrades are not blocked by an existing deficit. `calculatePlanetEnergy` and `projectBuildingEnergy` are the only shared calculation source.
+- Building categories are central constants: Resources contains Alloy Mine, Heliox Extractor, Aether Synthesizer, Alloy Depot, Heliox Tank and Aether Vault; Energy contains Solar Array; Infrastructure contains Shipyard, Research Lab and Gate Observatory.
 - Planet type affects resource multipliers. Temperature is stored and displayed but is not used in any formula; solar index only affects solar energy.
 
 ### Travel, intelligence, and combat
@@ -381,7 +383,7 @@ The intended authority boundary is clear and mostly located correctly:
 - The worker uses server-side formulas and randomness to complete queues and missions.
 - UI countdowns (`useTicker`) are display-only; they do not complete work.
 
-The trusted resource/building slice is authoritative under concurrency and failure: planet-row locking serializes settle/spend, one active building prevents mixed-queue ambiguity, persisted costs drive refunds, completion claims and all side effects share a transaction, and PostgreSQL repairs missing BullMQ building jobs. The following limitations remain in systems outside that slice:
+The trusted resource/building slice is authoritative under concurrency and failure: planet-row locking serializes energy-check/settle/spend, rejected energy attempts perform no writes, one active building prevents mixed-queue ambiguity, persisted costs drive refunds, completion claims and all side effects share a transaction, and PostgreSQL repairs missing BullMQ building jobs. The following limitations remain in systems outside that slice:
 
 - Research, shipyard, and fleet spend paths still perform “read/check, then unconditional decrement” patterns that can race; the building path no longer does.
 - Fleet ship counts are checked before a transaction and then decremented without a `count >= requested` predicate (`fleet.ts:63-69`, `fleet.ts:130-137`).
@@ -446,7 +448,8 @@ No secret values were read. The documented names and behavior are:
 | `TEST_DATABASE_URL`, `ALLOW_TEST_DATABASE_RESET` | API/worker tests | Both are required for destructive integration cleanup, and the decoded database name must end in `_test`. Runtime `DATABASE_URL` is never a fallback. |
 | `REDIS_URL` | API/worker source | Defaults to local Redis in development/test; Compose passes through an override or uses `redis://redis:6379`. |
 | `PORT` | API | Defaults 4000; Compose mapping and readiness probe follow it. |
-| `NODE_ENV` | API/container | Controls Prisma singleton and cookie default; Compose defaults production. |
+| `BIND_ADDRESS`, `*_HOST_PORT` | Local Compose/launcher | Loopback-only host bindings; the launcher selects bounded fallbacks without changing container-side service ports. |
+| `NODE_ENV` | API/container | Controls Prisma singleton and cookie default; local Compose and the launcher use development mode. |
 | `WEB_URL` | API | Single CORS origin and base for email links. |
 | `COOKIE_SECURE` | API | `false` supports local HTTP even with production node mode. Must be true behind production HTTPS. |
 | `SMTP_HOST`, `SMTP_PORT` | API mailer | Compose passes through overrides or uses Mailpit. Production validation requires a non-local STARTTLS endpoint; no username/password variables exist. |
@@ -469,15 +472,15 @@ Universe settings (`universeSpeed`, `economySpeed`, `fleetSpeed`, `researchSpeed
 
 | Suite | Existing coverage | Important omissions |
 | --- | --- | --- |
-| Root guard/source tests, 25 tests | Database URL/reset safety, vertical-slice project/database/cleanup/redaction safety, and the read-only admin-page source boundary. | General browser/component/accessibility testing. |
-| Shared, 23 tests | Existing formulas plus deterministic timestamp production, precision, validation, energy and storage behavior. | Broader combat/research/shipyard/fleet formula edge cases. |
+| Root guard/source tests, 33 tests | Database URL/reset safety, local-launcher port selection/command scope/redaction, vertical-slice project/database/cleanup/redaction safety, and the read-only admin-page source boundary. | General browser/component/accessibility testing. |
+| Shared, 32 tests | Existing formulas plus deterministic timestamp production, precision, validation, central current/projected energy, hard-gate edge cases, category mapping and storage behavior. | Broader combat/research/shipyard/fleet formula edge cases. |
 | API config/failure boundaries, 22 tests | Runtime parsing, production restrictions, normalized failures/log redaction, liveness and readiness. | Proxy behavior and authenticated SMTP. |
-| API integration, 106 tests | Existing routes plus atomic registration, email recovery, session hardening, resource/building concurrency and completion, and admin player-state RBAC/allowlists/audit. | Research/shipyard/fleet/social concurrency and complete authorization matrices. |
+| API integration, 115 tests | Existing routes plus atomic registration, email recovery, session hardening, energy-gated resource/building concurrency and completion, presentation allowlists, and admin player-state RBAC/allowlists/audit. | Research/shipyard/fleet/social concurrency and complete authorization matrices. |
 | Worker config/health, 16 tests | Runtime parsing and separate liveness/readiness behavior. | Operational telemetry beyond probes. |
 | Worker integration, 27 tests | Existing fleet cases plus building transition timing, idempotency, race behavior and reconciliation. | Research/shipyard/fleet general idempotency and recovery. |
-| Full stack | One disposable scenario | Registration → Mailpit verification → login/session digest → homeworld → building completion → production → logout/login → full restart → admin inspection/audit, with cleanup and unrelated-container checks. |
+| Full stack | Volume-preserving local launcher, project-scoped reset/test runner, and one disposable scenario | The local launcher handles conflicts and phased dependency readiness. The reset runner invokes every supported verification layer. The disposable scenario covers registration → Mailpit verification → login/session digest → homeworld → building completion → production → logout/login → full restart → admin inspection/audit, with cleanup and unrelated-container checks. |
 
-The root `npm test` runs 219 unit/integration tests. API/worker integration suites fail closed unless an explicitly opted-in `TEST_DATABASE_URL` passes the test-database guard; they never fall back to runtime `DATABASE_URL`. Build verification remains the separate `npm run build` command. The known ESLint 9 configuration failures remain outside this checkpoint.
+The root `npm test` runs 245 unit/integration tests. API/worker integration suites fail closed unless an explicitly opted-in `TEST_DATABASE_URL` passes the test-database guard; they never fall back to runtime `DATABASE_URL`. Build verification remains the separate `npm run build` command. `npm run start:local` provides conflict-aware, volume-preserving local startup; `npm run test:reset` composes the explicitly destructive clean reset, Prisma Client generation, isolated migrations, tests, build, disposable full-stack restart check, and final development startup. Both commands are scoped to the Eon Rover Compose project. The known ESLint 9 configuration failures remain outside this milestone.
 
 ## Confirmed defects, inconsistencies, and security concerns
 

@@ -1,4 +1,9 @@
-import { BuildingKey, DefenceKey, PlanetType, ResearchKey, ResourceAmounts, ShipKey } from './types';
+import { BuildingCategory, BuildingKey, DefenceKey, PlanetType, ResearchKey, ResourceAmounts, ShipKey } from './types';
+export declare const BUILDING_CATEGORIES: ReadonlyArray<{
+    key: BuildingCategory;
+    label: string;
+    description: string;
+}>;
 /**
  * Base definitions for buildings. Costs are for level 1 -> the formulas in
  * `formulas.ts` scale these up using an exponential growth factor per level.
@@ -6,6 +11,7 @@ import { BuildingKey, DefenceKey, PlanetType, ResearchKey, ResourceAmounts, Ship
 export interface BuildingDefinition {
     key: BuildingKey;
     name: string;
+    category: BuildingCategory;
     description: string;
     baseCost: ResourceAmounts;
     costGrowth: number;
