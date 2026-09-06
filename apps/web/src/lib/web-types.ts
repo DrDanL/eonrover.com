@@ -119,6 +119,10 @@ export interface BuildingCatalogItem {
     additionalRequired: number;
     shortfall: number;
   };
+  fieldRequirement: number;
+  projectedOccupied: number;
+  projectedAvailable: number;
+  hasSufficientFields: boolean;
   requirements: Array<{
     buildingId: string;
     buildingName: string;
@@ -165,6 +169,17 @@ export interface PlanetEnergySummary {
   status: 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
 }
 
+export interface PlanetFieldSummary {
+  capacity: number;
+  completedUsed: number;
+  reserved: number;
+  occupied: number;
+  available: number;
+  isAtCapacity: boolean;
+  isOverCapacity: boolean;
+  overCapacityBy: number;
+}
+
 export interface OwnedPlanetOption {
   id: string;
   name: string;
@@ -192,6 +207,7 @@ export interface CommandPlanetSummary {
   storage: ResourceAmounts;
   productionPerHour: ResourceAmounts;
   energy: PlanetEnergySummary;
+  fields: PlanetFieldSummary;
   activeConstruction: null | {
     id: string;
     buildingKey: BuildingKey;
@@ -411,6 +427,7 @@ export interface AdminPlayerState {
       demand: number;
       efficiency: number;
     };
+    fields: PlanetFieldSummary;
     storage: ResourceAmounts;
     buildings: Array<{ key: string; level: number }>;
     activeConstruction: {

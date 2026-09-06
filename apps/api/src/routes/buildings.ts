@@ -9,6 +9,7 @@ import {
   buildingCost,
   buildingDurationSeconds,
   buildingEnergy,
+  calculatePlanetFields,
   evaluateBuildingPrerequisites,
   hourlyProduction,
   planetProductionMultiplier,
@@ -28,6 +29,11 @@ import { buildQueue } from '../lib/redis';
 import { AppError, asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 import { getUniverseConfig } from '../services/gameConfig';
 import { completeDueBuildingConstructionsForPlanet } from '../services/buildingCompletionService';
+import {
+  buildingLevelRecord,
+  pendingFieldReservationCounts,
+  presentPlanetFieldSummary,
+} from '../services/planetFieldService';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
@@ -198,9 +204,7 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   }
   const currentTime = new Date();
   const synced = await syncPlanetResources(planet.id, currentTime);
-  const levels = Object.fromEntries(
-    synced.buildings.map((building) => [building.key, building.level]),
-  ) as Partial<Record<BuildingKey, number>>;
+  const levels = buildingLevelRecord(synced.buildings);
   const [pending, config] = await Promise.all([
     prisma.buildQueueItem.findMany({
       where: { planetId: planet.id, status: 'PENDING' },
@@ -209,12 +213,25 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     getUniverseConfig(),
   ]);
   const hasActiveConstruction = pending.length > 0;
+  const pendingReservations = pendingFieldReservationCounts(pending);
+  const planetFields = calculatePlanetFields({
+    capacity: synced.planet.fieldCapacity,
+    buildingLevels: levels,
+    pendingConstructionCounts: pendingReservations,
+    proposedBuildingKey: 'alloyMine',
+  });
   const catalog = Object.values(BUILDINGS).map((definition) => {
     const currentLevel = levels[definition.key] ?? 0;
     const nextLevel = currentLevel + 1;
     const upgradeCost = buildingCost(definition.key, nextLevel);
     const projection = projectBuildingEnergy(levels, synced.planet.solarIndex, definition.key, nextLevel);
     const prerequisiteEvaluation = evaluateBuildingPrerequisites(definition.key, levels)!;
+    const fieldProjection = calculatePlanetFields({
+      capacity: synced.planet.fieldCapacity,
+      buildingLevels: levels,
+      pendingConstructionCounts: pendingReservations,
+      proposedBuildingKey: definition.key,
+    });
     const requirements = prerequisiteEvaluation.requirements.map(presentPrerequisite);
     const unmetRequirements = prerequisiteEvaluation.unmetRequirements.map(presentPrerequisite);
     const missingResources = {
@@ -233,6 +250,9 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
       unavailableReason = `Requires ${unmetRequirements
         .map((requirement) => `${requirement.buildingName} level ${requirement.requiredLevel}`)
         .join(', ')}.`;
+    } else if (!fieldProjection.canConstruct) {
+      unavailableReasonCode = ERROR_CODES.PLANET_FIELDS_FULL;
+      unavailableReason = 'No planetary fields available.';
     } else if (!projection.energyRequirementMet) {
       unavailableReasonCode = ERROR_CODES.INSUFFICIENT_ENERGY;
       unavailableReason = `Requires ${Number(projection.shortfall.toFixed(2))} more energy.`;
@@ -280,6 +300,10 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         additionalRequired: projection.additionalEnergyRequired,
         shortfall: projection.shortfall,
       },
+      fieldRequirement: fieldProjection.requiredForUpgrade,
+      projectedOccupied: fieldProjection.projectedOccupied,
+      projectedAvailable: fieldProjection.projectedAvailable,
+      hasSufficientFields: fieldProjection.canConstruct,
       requirements,
       unmetRequirements,
       meetsPrerequisites: prerequisiteEvaluation.meetsPrerequisites,
@@ -299,6 +323,7 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     catalog,
     queue: pending.map(presentQueueItem),
     planet: presentPlanetResources(synced.planet),
+    fields: presentPlanetFieldSummary(planetFields),
     energy: synced.energy,
     production: synced.production,
     storage: {
@@ -370,15 +395,31 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     const key = requestedKey as BuildingKey;
 
     const buildings = await tx.building.findMany({ where: { planetId: lockedPlanet.id } });
-    const buildingLevels = Object.fromEntries(
-      buildings.map((building) => [building.key, building.level]),
-    ) as Partial<Record<BuildingKey, number>>;
+    const buildingLevels = buildingLevelRecord(buildings);
     const targetLevel = (buildingLevels[key] ?? 0) + 1;
     const prerequisiteEvaluation = evaluateBuildingPrerequisites(key, buildingLevels)!;
     if (!prerequisiteEvaluation.meetsPrerequisites) {
       return {
         kind: 'requirements' as const,
         requirements: prerequisiteEvaluation.unmetRequirements.map(presentUnmetPrerequisite),
+      };
+    }
+
+    const fields = calculatePlanetFields({
+      capacity: lockedPlanet.fieldCapacity,
+      buildingLevels,
+      proposedBuildingKey: key,
+    });
+    if (!fields.canConstruct) {
+      return {
+        kind: 'insufficient-fields' as const,
+        details: {
+          capacity: fields.capacity,
+          completedUsed: fields.completedUsed,
+          reserved: fields.reserved,
+          available: fields.available,
+          requiredForUpgrade: fields.requiredForUpgrade,
+        },
       };
     }
 
@@ -456,6 +497,16 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
       ERROR_CODES.PREREQUISITES_NOT_MET,
       'Building prerequisites have not been met.',
       { requirements: outcome.requirements },
+    );
+    return;
+  }
+  if (outcome.kind === 'insufficient-fields') {
+    sendError(
+      res,
+      409,
+      ERROR_CODES.PLANET_FIELDS_FULL,
+      'No planetary building fields are available.',
+      outcome.details,
     );
     return;
   }

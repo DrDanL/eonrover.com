@@ -28,6 +28,7 @@ interface PlanetOptions {
   solarArrayLevel?: number;
   researchLabLevel?: number;
   solarIndex?: number;
+  fieldCapacity?: number;
 }
 
 beforeEach(() => {
@@ -84,6 +85,7 @@ async function createPlanet(options: PlanetOptions) {
       planetType: 'TEMPERATE',
       temperature: 10,
       solarIndex: options.solarIndex ?? 0.7,
+      fieldCapacity: options.fieldCapacity ?? 180,
       alloy: options.alloy ?? 1_000,
       heliox: options.heliox ?? 1_000,
       aether: options.aether ?? 1_000,
@@ -409,6 +411,126 @@ describe('atomic building construction start', () => {
     expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(1);
   });
 
+  it('reserves the final available field for an accepted construction', async () => {
+    const { user, cookie } = await createPlayer('final-field@example.com', 'final-field');
+    const planet = await createPlanet({
+      ownerId: user.id,
+      alloyMineLevel: 1,
+      solarArrayLevel: 0,
+      fieldCapacity: 2,
+    });
+
+    await startConstruction(cookie, planet.id, { key: 'solarArray' }).expect(201);
+    const catalog = await request(app).get(`/api/planets/${planet.id}/buildings`).set('Cookie', cookie).expect(200);
+
+    expect(catalog.body.fields).toEqual({
+      capacity: 2,
+      completedUsed: 1,
+      reserved: 1,
+      occupied: 2,
+      available: 0,
+      isAtCapacity: true,
+      isOverCapacity: false,
+      overCapacityBy: 0,
+    });
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id, status: 'PENDING' } })).toBe(1);
+  });
+
+  it('rejects construction above field capacity before energy, resources, or production settlement', async () => {
+    const { user, cookie } = await createPlayer('fields-full@example.com', 'fields-full');
+    const previousProductionAt = new Date(NOW.getTime() - 60 * 60 * 1000);
+    const planet = await createPlanet({
+      ownerId: user.id,
+      alloy: 0,
+      heliox: 0,
+      aether: 0,
+      alloyMineLevel: 2,
+      solarArrayLevel: 0,
+      fieldCapacity: 2,
+      lastProductionAt: previousProductionAt,
+    });
+
+    const response = await startConstruction(cookie, planet.id).expect(409);
+
+    expect(response.body).toEqual({
+      error: 'No planetary building fields are available.',
+      code: 'PLANET_FIELDS_FULL',
+      details: {
+        capacity: 2,
+        completedUsed: 2,
+        reserved: 0,
+        available: 0,
+        requiredForUpgrade: 1,
+      },
+    });
+    const persisted = await prisma.planet.findUniqueOrThrow({ where: { id: planet.id } });
+    expect({ alloy: persisted.alloy, heliox: persisted.heliox, aether: persisted.aether }).toEqual({
+      alloy: 0,
+      heliox: 0,
+      aether: 0,
+    });
+    expect(persisted.lastProductionAt).toEqual(previousProductionAt);
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('ignores client-supplied field capacity and usage', async () => {
+    const { user, cookie } = await createPlayer('untrusted-fields@example.com', 'untrusted-fields');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 1, fieldCapacity: 1 });
+
+    const response = await startConstruction(cookie, planet.id, {
+      key: 'alloyMine',
+      fieldCapacity: 999_999,
+      completedUsed: 0,
+      reserved: 0,
+      available: 999_999,
+    }).expect(409);
+
+    expect(response.body.code).toBe('PLANET_FIELDS_FULL');
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('keeps prerequisite failures ahead of field-capacity failures', async () => {
+    const { user, cookie } = await createPlayer('field-prerequisite@example.com', 'field-prerequisite');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 1, fieldCapacity: 1 });
+
+    const response = await startConstruction(cookie, planet.id, { key: 'alloyStorage' }).expect(409);
+
+    expect(response.body.code).toBe('PREREQUISITES_NOT_MET');
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+    expect(addJob).not.toHaveBeenCalled();
+  });
+
+  it('blocks a legacy over-capacity planet without altering completed buildings', async () => {
+    const { user, cookie } = await createPlayer('legacy-fields@example.com', 'legacy-fields');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 3, solarArrayLevel: 1 });
+    await prisma.$executeRaw`UPDATE "Planet" SET "fieldCapacity" = 2 WHERE "id" = ${planet.id}`;
+
+    const response = await startConstruction(cookie, planet.id, { key: 'solarArray' }).expect(409);
+
+    expect(response.body.code).toBe('PLANET_FIELDS_FULL');
+    expect(response.body.details).toMatchObject({ capacity: 2, completedUsed: 4, available: 0 });
+    expect((await prisma.building.findUniqueOrThrow({
+      where: { planetId_key: { planetId: planet.id, key: 'alloyMine' } },
+    })).level).toBe(3);
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id } })).toBe(0);
+  });
+
+  it('serialises final-field attempts so capacity cannot be exceeded', async () => {
+    const { user, cookie } = await createPlayer('concurrent-fields@example.com', 'concurrent-fields');
+    const planet = await createPlanet({ ownerId: user.id, fieldCapacity: 1 });
+
+    const responses = await Promise.all([
+      startConstruction(cookie, planet.id, { key: 'solarArray' }),
+      startConstruction(cookie, planet.id, { key: 'solarArray' }),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    expect(responses.find((response) => response.status === 409)?.body.code).toBe('CONSTRUCTION_IN_PROGRESS');
+    expect(await prisma.buildQueueItem.count({ where: { planetId: planet.id, status: 'PENDING' } })).toBe(1);
+  });
+
   it('rejects an upgrade beyond capacity without changing resources, timestamps, rows, or jobs', async () => {
     const { user, cookie } = await createPlayer('energy-blocked@example.com', 'energy-blocked');
     const previousProductionAt = new Date(NOW.getTime() - 60 * 60 * 1000);
@@ -683,6 +805,18 @@ describe('atomic building construction start', () => {
 });
 
 describe('atomic building construction cancellation', () => {
+  it('releases a reserved field after cancellation', async () => {
+    const { user, cookie } = await createPlayer('field-canceller@example.com', 'field-canceller');
+    const planet = await createPlanet({ ownerId: user.id, alloyMineLevel: 1, fieldCapacity: 2 });
+    const accepted = await startConstruction(cookie, planet.id, { key: 'solarArray' }).expect(201);
+    const during = await request(app).get(`/api/planets/${planet.id}/buildings`).set('Cookie', cookie).expect(200);
+
+    expect(during.body.fields).toMatchObject({ completedUsed: 1, reserved: 1, occupied: 2, available: 0 });
+    await cancelConstruction(cookie, planet.id, accepted.body.queueItem.id).expect(200);
+    const after = await request(app).get(`/api/planets/${planet.id}/buildings`).set('Cookie', cookie).expect(200);
+    expect(after.body.fields).toMatchObject({ completedUsed: 1, reserved: 0, occupied: 1, available: 1 });
+  });
+
   it('synchronises and refunds 50% of the stored cost, then tolerates Redis removal failure', async () => {
     const { user, cookie } = await createPlayer('stored-refund@example.com', 'stored-refund');
     const planet = await createPlanet({

@@ -31,13 +31,14 @@ export function timeUntilStorageFullSeconds(amount: number, hourlyRate: number, 
 
 export interface PlanetNextActionInput {
   activeConstruction: { buildingName: string; targetLevel: number } | null;
+  fields: { available: number; isOverCapacity: boolean };
   energyStatus: 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
   energyBlockedBuildingKeys: BuildingKey[];
   buildingLevels: Partial<Record<BuildingKey, number>>;
 }
 
 export interface PlanetNextAction {
-  kind: 'construction' | 'energy' | 'alloy' | 'heliox' | 'aether' | 'buildings';
+  kind: 'construction' | 'fields' | 'energy' | 'alloy' | 'heliox' | 'aether' | 'buildings';
   title: string;
   reason: string;
   buildingKey?: BuildingKey;
@@ -49,6 +50,15 @@ export function selectPlanetNextAction(input: PlanetNextActionInput): PlanetNext
       kind: 'construction',
       title: `${input.activeConstruction.buildingName} level ${input.activeConstruction.targetLevel} is underway`,
       reason: 'Monitor the authoritative construction timer before planning the next upgrade.',
+    };
+  }
+  if (input.fields.available === 0) {
+    return {
+      kind: 'fields',
+      title: input.fields.isOverCapacity ? 'Planet is over field capacity' : 'Planetary field capacity reached',
+      reason: input.fields.isOverCapacity
+        ? 'Completed facilities exceed this planet’s configured capacity. Existing buildings remain operational, but no new upgrade can begin.'
+        : 'Every planetary building field is occupied. No additional building upgrade can begin.',
     };
   }
   if (input.energyStatus === 'deficit' || input.energyBlockedBuildingKeys.length > 0) {

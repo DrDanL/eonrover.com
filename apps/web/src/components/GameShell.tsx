@@ -23,6 +23,18 @@ export default function GameShell({ user, children }: { user: CurrentUser; child
   const selected = summary?.selectedPlanet ?? null;
   const selectedPlanetId = summary?.selectedPlanetId ?? null;
   const construction = selected?.activeConstruction ?? null;
+  const fieldUsagePercentage = selected
+    ? Math.min(100, Math.max(0, (selected.fields.occupied / selected.fields.capacity) * 100))
+    : 0;
+  const fieldState = selected
+    ? selected.fields.isOverCapacity
+      ? 'over-capacity'
+      : selected.fields.available === 0
+        ? 'full'
+        : selected.fields.available <= Math.max(1, Math.ceil(selected.fields.capacity * 0.1))
+          ? 'near-capacity'
+          : 'available'
+    : 'available';
   const showAdminLink = user.role !== 'PLAYER';
 
   function switchPlanet(nextPlanetId: string) {
@@ -93,6 +105,31 @@ export default function GameShell({ user, children }: { user: CurrentUser; child
       <section className="command-telemetry" aria-label="Planet command status">
         {selected && summary ? (
           <GameResourceBar planet={selected} serverTimestamp={summary.serverTimestamp} now={now} />
+        ) : null}
+        {selected ? (
+          <div className={`global-fields fields-${fieldState}`}>
+            <div>
+              <strong>Fields: {selected.fields.completedUsed} built{selected.fields.reserved > 0 ? ` + ${selected.fields.reserved} under construction` : ''} / {selected.fields.capacity}</strong>
+              <span>
+                {selected.fields.isOverCapacity
+                  ? `${selected.fields.overCapacityBy} over capacity; new construction blocked`
+                  : selected.fields.available === 0
+                    ? 'No planetary fields available'
+                    : `${selected.fields.available} field${selected.fields.available === 1 ? '' : 's'} remaining`}
+              </span>
+            </div>
+            <div
+              className="field-capacity-bar"
+              role="progressbar"
+              aria-label="Planetary building fields occupied"
+              aria-valuemin={0}
+              aria-valuemax={selected.fields.capacity}
+              aria-valuenow={Math.min(selected.fields.capacity, Math.max(0, selected.fields.occupied))}
+              aria-valuetext={`${selected.fields.occupied} of ${selected.fields.capacity} fields occupied; ${selected.fields.available} remaining`}
+            >
+              <span style={{ width: `${fieldUsagePercentage}%` }} />
+            </div>
+          </div>
         ) : null}
         {construction && selectedPlanetId ? (
           <div className="global-construction" role="status">

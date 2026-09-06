@@ -17,6 +17,8 @@ export interface BuildingDefinition {
     costGrowth: number;
     /** base energy consumed (positive) or produced (negative) at level 1 */
     baseEnergy: number;
+    /** planetary fields occupied by each completed or pending level */
+    fieldCost: number;
     producesResource?: 'alloy' | 'heliox' | 'aether';
 }
 export declare const BUILDINGS: Record<BuildingKey, BuildingDefinition>;

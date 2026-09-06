@@ -4,3 +4,4 @@ export * from './formulas';
 export * from './buildingCompletion';
 export * from './buildingPrerequisites';
 export * from './gamePresentation';
+export * from './planetFields';

@@ -36,6 +36,15 @@ function selectPlanetNextAction(input) {
             reason: 'Monitor the authoritative construction timer before planning the next upgrade.',
         };
     }
+    if (input.fields.available === 0) {
+        return {
+            kind: 'fields',
+            title: input.fields.isOverCapacity ? 'Planet is over field capacity' : 'Planetary field capacity reached',
+            reason: input.fields.isOverCapacity
+                ? 'Completed facilities exceed this planet’s configured capacity. Existing buildings remain operational, but no new upgrade can begin.'
+                : 'Every planetary building field is occupied. No additional building upgrade can begin.',
+        };
+    }
     if (input.energyStatus === 'deficit' || input.energyBlockedBuildingKeys.length > 0) {
         return {
             kind: 'energy',

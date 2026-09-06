@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   BUILDINGS,
   BuildingKey,
+  calculatePlanetFields,
   evaluateBuildingPrerequisites,
   projectBuildingEnergy,
   storageCapacity,
@@ -17,6 +18,11 @@ import {
 import { AppError, asyncHandler, ERROR_CODES, sendError } from '../middleware/error';
 import { completeDueBuildingConstructionsForPlanet } from '../services/buildingCompletionService';
 import { getUniverseConfig } from '../services/gameConfig';
+import {
+  buildingLevelRecord,
+  pendingFieldReservationCounts,
+  presentPlanetFieldSummary,
+} from '../services/planetFieldService';
 
 const router = Router();
 
@@ -84,9 +90,15 @@ router.get('/command-summary', asyncHandler(async (req, res) => {
     return { synced, activeConstruction };
   });
 
-  const buildingLevels = Object.fromEntries(
-    snapshot.synced.buildings.map((building) => [building.key, building.level]),
-  ) as Record<string, number>;
+  const buildingLevels = buildingLevelRecord(snapshot.synced.buildings);
+  const fields = calculatePlanetFields({
+    capacity: snapshot.synced.planet.fieldCapacity,
+    buildingLevels,
+    pendingConstructionCounts: pendingFieldReservationCounts(
+      snapshot.activeConstruction ? [snapshot.activeConstruction] : [],
+    ),
+    proposedBuildingKey: 'alloyMine',
+  });
   const resourceBuildingKeys: BuildingKey[] = ['alloyMine', 'helioxExtractor', 'aetherSynthesizer'];
   const energyBlockedBuildingKeys = resourceBuildingKeys.filter((key) => {
     if (!evaluateBuildingPrerequisites(key, buildingLevels)?.meetsPrerequisites) return false;
@@ -139,6 +151,7 @@ router.get('/command-summary', asyncHandler(async (req, res) => {
       },
       productionPerHour: snapshot.synced.production,
       energy: snapshot.synced.energy,
+      fields: presentPlanetFieldSummary(fields),
       activeConstruction,
       buildings: Object.values(BUILDINGS).map((definition) => ({
         key: definition.key,

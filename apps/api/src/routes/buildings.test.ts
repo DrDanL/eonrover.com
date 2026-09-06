@@ -83,6 +83,10 @@ describe('buildings queue', () => {
       requirements: [],
       unmetRequirements: [],
       meetsPrerequisites: true,
+      fieldRequirement: 1,
+      projectedOccupied: 3,
+      projectedAvailable: 177,
+      hasSufficientFields: true,
     });
     expect(response.body.catalog.find((building: { key: string }) => building.key === 'alloyStorage')).toMatchObject({
       canConstruct: false,
@@ -117,6 +121,16 @@ describe('buildings queue', () => {
       lastProductionAt: expect.any(String),
     });
     expect(response.body.planet).not.toHaveProperty('ownerId');
+    expect(response.body.fields).toEqual({
+      capacity: 180,
+      completedUsed: 1,
+      reserved: 1,
+      occupied: 2,
+      available: 178,
+      isAtCapacity: false,
+      isOverCapacity: false,
+      overCapacityBy: 0,
+    });
     expect(response.body.queue).toHaveLength(1);
     expect(response.body.queue[0]).toMatchObject({ id: enqueue.body.queueItem.id, buildingName: 'Alloy Mine' });
     expect(response.body.queue[0]).not.toHaveProperty('jobId');

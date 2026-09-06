@@ -90,6 +90,16 @@ describe('authenticated command summary', () => {
     expect(response.body.selectedPlanet.resources).toEqual({ alloy: 533, heliox: 322, aether: 0 });
     expect(response.body.selectedPlanet.productionPerHour).toEqual({ alloy: 33, heliox: 22, aether: 0 });
     expect(response.body.selectedPlanet.energy).toMatchObject({ supply: 46.4, demand: 22, available: 24.4 });
+    expect(response.body.selectedPlanet.fields).toEqual({
+      capacity: 180,
+      completedUsed: 3,
+      reserved: 0,
+      occupied: 3,
+      available: 177,
+      isAtCapacity: false,
+      isOverCapacity: false,
+      overCapacityBy: 0,
+    });
     const persisted = await prisma.planet.findUniqueOrThrow({ where: { id: planet.id } });
     expect(persisted.lastProductionAt).toEqual(NOW);
   });
@@ -171,6 +181,7 @@ describe('authenticated command summary', () => {
       'buildings',
       'energy',
       'energyBlockedBuildingKeys',
+      'fields',
       'identity',
       'productionPerHour',
       'resources',
@@ -187,6 +198,17 @@ describe('authenticated command summary', () => {
     ]);
     expect(response.body.selectedPlanet.identity).not.toHaveProperty('ownerId');
     expect(response.body.selectedPlanet.activeConstruction).not.toHaveProperty('jobId');
+    expect(Object.keys(response.body.selectedPlanet.fields).sort()).toEqual([
+      'available',
+      'capacity',
+      'completedUsed',
+      'isAtCapacity',
+      'isOverCapacity',
+      'occupied',
+      'overCapacityBy',
+      'reserved',
+    ]);
+    expect(response.body.selectedPlanet.fields).toMatchObject({ completedUsed: 3, reserved: 1, occupied: 4 });
     expect(response.body.ownedPlanets[0]).not.toHaveProperty('ownerId');
   });
 

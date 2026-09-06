@@ -20,3 +20,4 @@ __exportStar(require("./formulas"), exports);
 __exportStar(require("./buildingCompletion"), exports);
 __exportStar(require("./buildingPrerequisites"), exports);
 __exportStar(require("./gamePresentation"), exports);
+__exportStar(require("./planetFields"), exports);

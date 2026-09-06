@@ -1,4 +1,5 @@
 import { Job } from 'bullmq';
+import { DEFAULT_PLANET_FIELD_CAPACITY } from '@eonrover/shared';
 import { prisma } from '../prisma';
 import { processFleetJob } from './fleetProcessor';
 
@@ -125,6 +126,7 @@ describe('fleetProcessor', () => {
     const newPlanet = await prisma.planet.findUnique({ where: { galaxy_system_slot: { galaxy: 3, system: 1, slot: 5 } } });
     expect(newPlanet).not.toBeNull();
     expect(newPlanet?.ownerId).toBe(colonizer.id);
+    expect(newPlanet?.fieldCapacity).toBe(DEFAULT_PLANET_FIELD_CAPACITY);
 
     const updatedMission = await prisma.fleetMission.findUniqueOrThrow({ where: { id: mission.id } });
     expect(updatedMission.status).toBe('COMPLETE');

@@ -27,6 +27,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 60, heliox: 15, aether: 0 },
         costGrowth: 1.5,
         baseEnergy: 10,
+        fieldCost: 1,
         producesResource: 'alloy',
     },
     helioxExtractor: {
@@ -37,6 +38,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 48, heliox: 24, aether: 0 },
         costGrowth: 1.5,
         baseEnergy: 12,
+        fieldCost: 1,
         producesResource: 'heliox',
     },
     aetherSynthesizer: {
@@ -47,6 +49,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 200, heliox: 150, aether: 0 },
         costGrowth: 1.6,
         baseEnergy: 18,
+        fieldCost: 1,
         producesResource: 'aether',
     },
     solarArray: {
@@ -57,6 +60,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 75, heliox: 30, aether: 0 },
         costGrowth: 1.5,
         baseEnergy: -20,
+        fieldCost: 1,
     },
     alloyStorage: {
         key: 'alloyStorage',
@@ -66,6 +70,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 500, heliox: 0, aether: 0 },
         costGrowth: 2,
         baseEnergy: 0,
+        fieldCost: 1,
     },
     helioxStorage: {
         key: 'helioxStorage',
@@ -75,6 +80,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 500, heliox: 250, aether: 0 },
         costGrowth: 2,
         baseEnergy: 0,
+        fieldCost: 1,
     },
     aetherStorage: {
         key: 'aetherStorage',
@@ -84,6 +90,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 800, heliox: 400, aether: 100 },
         costGrowth: 2,
         baseEnergy: 0,
+        fieldCost: 1,
     },
     shipyard: {
         key: 'shipyard',
@@ -93,6 +100,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 400, heliox: 200, aether: 100 },
         costGrowth: 1.6,
         baseEnergy: 0,
+        fieldCost: 1,
     },
     researchLab: {
         key: 'researchLab',
@@ -102,6 +110,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 250, heliox: 400, aether: 100 },
         costGrowth: 1.7,
         baseEnergy: 0,
+        fieldCost: 1,
     },
     gateObservatory: {
         key: 'gateObservatory',
@@ -111,6 +120,7 @@ exports.BUILDINGS = {
         baseCost: { alloy: 1200, heliox: 900, aether: 500 },
         costGrowth: 1.8,
         baseEnergy: 15,
+        fieldCost: 1,
     },
 };
 exports.RESEARCH = {

@@ -340,6 +340,11 @@ function assertAdminPlayerStateSafe(body, expected, sensitiveValues) {
     'The administrator view did not report the completed Alloy Mine.',
   );
   expect(planet.activeConstruction === null, 'The administrator view reported completed construction as active.');
+  expect(
+    planet.fields?.capacity === 2 && planet.fields.completedUsed === 2 &&
+      planet.fields.reserved === 0 && planet.fields.occupied === 2 && planet.fields.available === 0,
+    'The administrator view did not report the expected safe derived field summary.',
+  );
 
   const forbiddenKeys = new Set([
     'passwordhash',
@@ -457,6 +462,12 @@ async function runWorkflow(urls, credentials) {
         FROM "Planet" planet
         JOIN "User" account ON account."id" = planet."ownerId"
         WHERE account."email" = ${sqlLiteral(email)}
+      ),
+      'fieldCapacity', (
+        SELECT planet."fieldCapacity"
+        FROM "Planet" planet
+        JOIN "User" account ON account."id" = planet."ownerId"
+        WHERE account."email" = ${sqlLiteral(email)} AND planet."isHomeworld" = TRUE
       )
     )
   `);
@@ -465,6 +476,7 @@ async function runWorkflow(urls, credentials) {
     registrationRows.homeworldCount === 1 && registrationRows.planetCount === 1,
     'Registration did not create exactly one homeworld.',
   );
+  expect(registrationRows.fieldCapacity === 180, 'Registration did not create the default 180-field homeworld.');
 
   step('Following the one real Mailpit verification message and rejecting token reuse.');
   const verificationToken = await waitForVerificationToken(mailpitUrl, email);
@@ -504,6 +516,12 @@ async function runWorkflow(urls, credentials) {
   expect(
     initialCommand.body?.ownedPlanets?.length === 1 && !('ownerId' in initialCommand.body.ownedPlanets[0]),
     'The command shell planet selector was incomplete or exposed an owner record.',
+  );
+  expect(
+    initialCommand.body?.selectedPlanet?.fields?.capacity === 180 &&
+      initialCommand.body.selectedPlanet.fields.completedUsed === 1 &&
+      initialCommand.body.selectedPlanet.fields.reserved === 0,
+    'The command shell did not return the fresh homeworld field summary.',
   );
   const storedSession = currentSession(userId);
   expect(storedSession.id === sessionDigest(session.rawToken), 'PostgreSQL did not store the session-token digest.');
@@ -585,7 +603,15 @@ async function runWorkflow(urls, credentials) {
     'The locked building attempt changed resources, production time, or the construction queue.',
   );
 
-  step('Starting one Alloy Mine upgrade and checking deduction and queue exclusivity.');
+  step('Starting one Alloy Mine upgrade in the final available field and checking deduction and queue exclusivity.');
+  const capacityChanged = Number(querySql(`
+    WITH changed AS (
+      UPDATE "Planet" SET "fieldCapacity" = 2 WHERE "id" = ${sqlLiteral(planetId)}
+      RETURNING "id"
+    )
+    SELECT COUNT(*)::int FROM changed
+  `));
+  expect(capacityChanged === 1, 'The isolated field-capacity adjustment did not target exactly one planet.');
   const beforeBuild = await apiRequest(apiUrl, `/api/planets/${planetId}`, { cookie: session.pair });
   const beforeAlloy = beforeBuild.body.planet.alloy;
   const beforeHeliox = beforeBuild.body.planet.heliox;
@@ -625,6 +651,13 @@ async function runWorkflow(urls, credentials) {
     commandDuringBuild.body?.selectedPlanet?.activeConstruction?.id === constructionId &&
       !('jobId' in commandDuringBuild.body.selectedPlanet.activeConstruction),
     'The command shell did not expose a safe active-construction summary.',
+  );
+  expect(
+    commandDuringBuild.body?.selectedPlanet?.fields?.completedUsed === 1 &&
+      commandDuringBuild.body.selectedPlanet.fields.reserved === 1 &&
+      commandDuringBuild.body.selectedPlanet.fields.occupied === 2 &&
+      commandDuringBuild.body.selectedPlanet.fields.available === 0,
+    'The accepted upgrade did not reserve the final available field.',
   );
   const duplicateStart = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, {
     method: 'POST',
@@ -668,6 +701,12 @@ async function runWorkflow(urls, credentials) {
         (building) => building.key === 'alloyMine' && building.level === 1,
       ),
     'The command shell did not refresh to the completed building state.',
+  );
+  expect(
+    commandAfterBuild.body?.selectedPlanet?.fields?.completedUsed === 2 &&
+      commandAfterBuild.body.selectedPlanet.fields.reserved === 0 &&
+      commandAfterBuild.body.selectedPlanet.fields.occupied === 2,
+    'Completion did not convert the reserved field to completed use exactly once.',
   );
 
   step('Verifying timestamp-based resource production without double-accruing an interval.');
@@ -721,6 +760,64 @@ async function runWorkflow(urls, credentials) {
   assert.equal(persistedResources.heliox, immediateRead.body.planet.heliox, 'API Heliox did not match PostgreSQL.');
   assert.equal(persistedResources.aether, immediateRead.body.planet.aether, 'API Aether did not match PostgreSQL.');
 
+  step('Releasing a reserved field through cancellation and rejecting construction at exact capacity.');
+  expect(Number(querySql(`WITH changed AS (UPDATE "Planet" SET "fieldCapacity" = 3 WHERE "id" = ${sqlLiteral(planetId)} RETURNING 1) SELECT COUNT(*)::int FROM changed`)) === 1,
+    'The cancellation capacity adjustment did not target exactly one planet.');
+  const cancellable = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, {
+    method: 'POST',
+    expectedStatus: 201,
+    cookie: session.pair,
+    body: { key: 'solarArray' },
+  });
+  const cancellableId = cancellable.body?.queueItem?.id;
+  expect(typeof cancellableId === 'string', 'The cancellable field reservation was not accepted.');
+  const fieldsDuringCancellation = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, { cookie: session.pair });
+  expect(
+    fieldsDuringCancellation.body?.fields?.completedUsed === 2 &&
+      fieldsDuringCancellation.body.fields.reserved === 1 &&
+      fieldsDuringCancellation.body.fields.available === 0,
+    'The cancellable upgrade did not reserve one field.',
+  );
+  await apiRequest(apiUrl, `/api/planets/${planetId}/buildings/${encodeURIComponent(cancellableId)}`, {
+    method: 'DELETE',
+    cookie: session.pair,
+  });
+  const fieldsAfterCancellation = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, { cookie: session.pair });
+  expect(
+    fieldsAfterCancellation.body?.fields?.completedUsed === 2 &&
+      fieldsAfterCancellation.body.fields.reserved === 0 &&
+      fieldsAfterCancellation.body.fields.available === 1,
+    'Cancellation did not release its field reservation.',
+  );
+  expect(Number(querySql(`WITH changed AS (UPDATE "Planet" SET "fieldCapacity" = 2 WHERE "id" = ${sqlLiteral(planetId)} RETURNING 1) SELECT COUNT(*)::int FROM changed`)) === 1,
+    'The exact-capacity adjustment did not target exactly one planet.');
+  const beforeFullAttempt = queryJson(`
+    SELECT json_build_object(
+      'alloy', "alloy", 'heliox', "heliox", 'aether', "aether",
+      'lastProductionAt', "lastProductionAt",
+      'pendingCount', (SELECT COUNT(*)::int FROM "BuildQueueItem" WHERE "planetId" = ${sqlLiteral(planetId)} AND "status" = 'PENDING')
+    ) FROM "Planet" WHERE "id" = ${sqlLiteral(planetId)}
+  `);
+  const fullAttempt = await apiRequest(apiUrl, `/api/planets/${planetId}/buildings`, {
+    method: 'POST',
+    expectedStatus: 409,
+    cookie: session.pair,
+    body: { key: 'solarArray', fieldCapacity: 999999, completedUsed: 0, available: 999999 },
+  });
+  expect(
+    fullAttempt.body?.code === 'PLANET_FIELDS_FULL' &&
+      fullAttempt.body?.details?.capacity === 2 && fullAttempt.body.details.available === 0,
+    'Exact capacity did not return the stable authoritative field rejection.',
+  );
+  const afterFullAttempt = queryJson(`
+    SELECT json_build_object(
+      'alloy', "alloy", 'heliox', "heliox", 'aether', "aether",
+      'lastProductionAt', "lastProductionAt",
+      'pendingCount', (SELECT COUNT(*)::int FROM "BuildQueueItem" WHERE "planetId" = ${sqlLiteral(planetId)} AND "status" = 'PENDING')
+    ) FROM "Planet" WHERE "id" = ${sqlLiteral(planetId)}
+  `);
+  assert.deepEqual(afterFullAttempt, beforeFullAttempt, 'A field-capacity rejection changed resources, production time, or queue state.');
+
   step('Inspecting the completed player state through the provisioned administrator account.');
   const adminSession = await login(apiUrl, adminEmail, adminPassword);
   const adminProfile = await apiRequest(apiUrl, '/api/auth/me', { cookie: adminSession.pair });
@@ -762,6 +859,7 @@ async function runWorkflow(urls, credentials) {
     aether: inspectedPlanetBeforeRestart.resources.aether,
     lastProductionAt: inspectedPlanetBeforeRestart.lastProductionAt,
     buildingLevel: completed.buildingLevel,
+    fieldCapacity: inspectedPlanetBeforeRestart.fields.capacity,
     sessionExpiry: sessionBeforeRestart.expiresAt,
   };
 
@@ -783,6 +881,13 @@ async function runWorkflow(urls, credentials) {
     'The persisted account did not retain exactly the same homeworld.',
   );
   const planetAfterRestart = await apiRequest(apiUrl, `/api/planets/${planetId}`, { cookie: session.pair });
+  const commandAfterRestart = await apiRequest(apiUrl, `/api/planets/command-summary?planetId=${encodeURIComponent(planetId)}`, { cookie: session.pair });
+  expect(
+    commandAfterRestart.body?.selectedPlanet?.fields?.capacity === stateBeforeRestart.fieldCapacity &&
+      commandAfterRestart.body.selectedPlanet.fields.completedUsed === 2 &&
+      commandAfterRestart.body.selectedPlanet.fields.reserved === 0,
+    'Persisted capacity or derived field usage changed across restart.',
+  );
   expect(planetAfterRestart.body.planet.alloy >= stateBeforeRestart.alloy, 'Alloy regressed across restart.');
   expect(planetAfterRestart.body.planet.heliox >= stateBeforeRestart.heliox, 'Heliox regressed across restart.');
   expect(planetAfterRestart.body.planet.aether >= stateBeforeRestart.aether, 'Aether regressed across restart.');

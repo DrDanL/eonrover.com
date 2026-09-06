@@ -13,12 +13,16 @@ export interface PlanetNextActionInput {
         buildingName: string;
         targetLevel: number;
     } | null;
+    fields: {
+        available: number;
+        isOverCapacity: boolean;
+    };
     energyStatus: 'healthy' | 'approaching' | 'at-capacity' | 'deficit';
     energyBlockedBuildingKeys: BuildingKey[];
     buildingLevels: Partial<Record<BuildingKey, number>>;
 }
 export interface PlanetNextAction {
-    kind: 'construction' | 'energy' | 'alloy' | 'heliox' | 'aether' | 'buildings';
+    kind: 'construction' | 'fields' | 'energy' | 'alloy' | 'heliox' | 'aether' | 'buildings';
     title: string;
     reason: string;
     buildingKey?: BuildingKey;

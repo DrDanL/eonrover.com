@@ -41,6 +41,7 @@ const gamePresentation_1 = require("./gamePresentation");
 (0, node_test_1.test)('selects the deterministic first missing resource building', () => {
     const action = (0, gamePresentation_1.selectPlanetNextAction)({
         activeConstruction: null,
+        fields: { available: 10, isOverCapacity: false },
         energyStatus: 'healthy',
         energyBlockedBuildingKeys: [],
         buildingLevels: { alloyMine: 1, helioxExtractor: 0, aetherSynthesizer: 0 },
@@ -51,6 +52,7 @@ const gamePresentation_1 = require("./gamePresentation");
 (0, node_test_1.test)('prioritises an energy-deficit recommendation', () => {
     const action = (0, gamePresentation_1.selectPlanetNextAction)({
         activeConstruction: null,
+        fields: { available: 10, isOverCapacity: false },
         energyStatus: 'deficit',
         energyBlockedBuildingKeys: [],
         buildingLevels: {},
@@ -61,12 +63,25 @@ const gamePresentation_1 = require("./gamePresentation");
 (0, node_test_1.test)('prioritises active construction above every other recommendation', () => {
     const action = (0, gamePresentation_1.selectPlanetNextAction)({
         activeConstruction: { buildingName: 'Solar Array', targetLevel: 2 },
+        fields: { available: 0, isOverCapacity: false },
         energyStatus: 'deficit',
         energyBlockedBuildingKeys: ['alloyMine'],
         buildingLevels: {},
     });
     strict_1.default.equal(action.kind, 'construction');
     strict_1.default.match(action.title, /Solar Array level 2/);
+});
+(0, node_test_1.test)('returns a neutral capacity explanation instead of recommending an upgrade when fields are full', () => {
+    const action = (0, gamePresentation_1.selectPlanetNextAction)({
+        activeConstruction: null,
+        fields: { available: 0, isOverCapacity: false },
+        energyStatus: 'deficit',
+        energyBlockedBuildingKeys: ['alloyMine'],
+        buildingLevels: {},
+    });
+    strict_1.default.equal(action.kind, 'fields');
+    strict_1.default.equal(action.buildingKey, undefined);
+    strict_1.default.match(action.reason, /No additional building upgrade/);
 });
 (0, node_test_1.test)('preserves supported planet sections and otherwise returns to overview', () => {
     strict_1.default.equal((0, gamePresentation_1.planetIdFromGamePath)('/game/planets/old/buildings'), 'old');

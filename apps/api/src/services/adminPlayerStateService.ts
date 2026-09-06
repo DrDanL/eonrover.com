@@ -1,6 +1,11 @@
-import { storageCapacity } from '@eonrover/shared';
+import { calculatePlanetFields, storageCapacity } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { syncPlanetResources } from './planetService';
+import {
+  buildingLevelRecord,
+  pendingFieldReservationCounts,
+  presentPlanetFieldSummary,
+} from './planetFieldService';
 
 export const ADMIN_PLAYER_SEARCH_MAX_PAGE_SIZE = 50;
 
@@ -96,6 +101,12 @@ export async function getAdminPlayerState(playerId: string, currentTime = new Da
       },
     });
     const buildingLevels = new Map(buildings.map((building) => [building.key, building.level]));
+    const fields = calculatePlanetFields({
+      capacity: planet.fieldCapacity,
+      buildingLevels: buildingLevelRecord(buildings),
+      pendingConstructionCounts: pendingFieldReservationCounts(activeConstruction ? [activeConstruction] : []),
+      proposedBuildingKey: 'alloyMine',
+    });
 
     planets.push({
       id: planet.id,
@@ -121,6 +132,7 @@ export async function getAdminPlayerState(playerId: string, currentTime = new Da
         demand: energy.demand,
         efficiency: energy.productionEfficiency,
       },
+      fields: presentPlanetFieldSummary(fields),
       storage: {
         alloy: storageCapacity(buildingLevels.get('alloyStorage') ?? 0),
         heliox: storageCapacity(buildingLevels.get('helioxStorage') ?? 0),

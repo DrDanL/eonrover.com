@@ -1,5 +1,5 @@
 import { PlanetType } from '@prisma/client';
-import { PLANET_TYPES, STARTING_RESOURCES } from '@eonrover/shared';
+import { DEFAULT_PLANET_FIELD_CAPACITY, PLANET_TYPES, STARTING_RESOURCES } from '@eonrover/shared';
 import request from 'supertest';
 import { createApp } from '../app';
 import { verifyPassword } from '../lib/auth';
@@ -122,6 +122,7 @@ describe('atomic registration provisioning', () => {
       alloy: STARTING_RESOURCES.alloy,
       heliox: STARTING_RESOURCES.heliox,
       aether: STARTING_RESOURCES.aether,
+      fieldCapacity: DEFAULT_PLANET_FIELD_CAPACITY,
     });
     expect(planet.galaxy).toBeGreaterThanOrEqual(1);
     expect(planet.galaxy).toBeLessThanOrEqual(6);

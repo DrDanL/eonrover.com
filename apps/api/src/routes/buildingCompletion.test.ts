@@ -39,6 +39,7 @@ async function createPlayerPlanet(options: {
   heliox?: number;
   lastProductionAt?: Date;
   alloyMineLevel?: number;
+  fieldCapacity?: number;
 } = {}) {
   const user = await prisma.user.create({
     data: {
@@ -59,6 +60,7 @@ async function createPlayerPlanet(options: {
       planetType: 'TEMPERATE',
       temperature: 10,
       solarIndex: 0.7,
+      fieldCapacity: options.fieldCapacity ?? 180,
       alloy: options.alloy ?? 100,
       heliox: options.heliox ?? 100,
       aether: 0,
@@ -141,6 +143,12 @@ describe('building completion API fallback', () => {
     expect(response.body.catalog).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'alloyMine', level: 1 })]),
     );
+    expect(response.body.fields).toMatchObject({
+      completedUsed: 1,
+      reserved: 0,
+      occupied: 1,
+      available: 179,
+    });
   });
 
   it('does not complete a future construction during API access', async () => {
@@ -161,7 +169,7 @@ describe('building completion API fallback', () => {
   });
 
   it('completes due construction before accepting the next valid upgrade', async () => {
-    const { planet, cookie } = await createPlayerPlanet({ alloy: 1_000, heliox: 1_000 });
+    const { planet, cookie } = await createPlayerPlanet({ alloy: 1_000, heliox: 1_000, fieldCapacity: 2 });
     const completed = await createConstruction(planet.id, NOW);
 
     const response = await request(app)
@@ -177,6 +185,8 @@ describe('building completion API fallback', () => {
     expect((await prisma.building.findUniqueOrThrow({
       where: { planetId_key: { planetId: planet.id, key: 'alloyMine' } },
     })).level).toBe(1);
+    const catalog = await request(app).get(`/api/planets/${planet.id}/buildings`).set('Cookie', cookie).expect(200);
+    expect(catalog.body.fields).toMatchObject({ completedUsed: 1, reserved: 1, occupied: 2, available: 0 });
   });
 });
 

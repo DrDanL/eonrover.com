@@ -1,5 +1,5 @@
 import { PlanetType, Prisma } from '@prisma/client';
-import { PLANET_TYPES, STARTING_RESOURCES } from '@eonrover/shared';
+import { DEFAULT_PLANET_FIELD_CAPACITY, PLANET_TYPES, STARTING_RESOURCES } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { AppError, ERROR_CODES } from '../middleware/error';
 import {
@@ -144,6 +144,7 @@ export async function provisionRegistration(
           solarIndex:
             planetProfile.solarIndexRange[0] +
             Math.random() * (planetProfile.solarIndexRange[1] - planetProfile.solarIndexRange[0]),
+          fieldCapacity: DEFAULT_PLANET_FIELD_CAPACITY,
           alloy: STARTING_RESOURCES.alloy,
           heliox: STARTING_RESOURCES.heliox,
           aether: STARTING_RESOURCES.aether,

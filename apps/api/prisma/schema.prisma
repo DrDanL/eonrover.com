@@ -102,6 +102,7 @@ model Planet {
   planetType       PlanetType
   temperature      Int
   solarIndex       Float
+  fieldCapacity    Int      @default(180)
 
   alloy            Float    @default(0)
   heliox           Float    @default(0)

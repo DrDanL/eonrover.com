@@ -18,6 +18,7 @@ import {
   BuildingCategoryMetadata,
   BuildingEnergyEffect,
   PlanetEnergySummary,
+  PlanetFieldSummary,
   PresentedBuildQueueItem,
   ResourceAmounts,
 } from '@/lib/web-types';
@@ -28,6 +29,7 @@ interface BuildingsResponse {
   queue: PresentedBuildQueueItem[];
   planet: ResourceAmounts & { lastProductionAt: string };
   energy: PlanetEnergySummary;
+  fields: PlanetFieldSummary;
   storage: ResourceAmounts;
   production: ResourceAmounts;
 }
@@ -264,6 +266,32 @@ export default function BuildingsPage() {
             <p className="energy-guidance">{energyCopy.detail}</p>
           </section>
 
+          <section className={`panel stack field-summary${data.fields.available === 0 ? ' fields-full' : ''}`} aria-labelledby="field-summary-heading">
+            <div className="energy-summary-heading">
+              <div>
+                <p className="eyebrow">Planetary space</p>
+                <h2 id="field-summary-heading">Building fields</h2>
+              </div>
+              <span className="tag">{data.fields.occupied} / {data.fields.capacity}</span>
+            </div>
+            <div className="field-capacity-row">
+              <span>{data.fields.completedUsed} built{data.fields.reserved > 0 ? ` + ${data.fields.reserved} under construction` : ''}</span>
+              <strong>{data.fields.available} remaining</strong>
+            </div>
+            <div className="field-capacity-bar" role="progressbar" aria-label="Planetary building fields occupied" aria-valuemin={0} aria-valuemax={data.fields.capacity} aria-valuenow={Math.min(data.fields.capacity, Math.max(0, data.fields.occupied))} aria-valuetext={`${data.fields.occupied} of ${data.fields.capacity} fields occupied; ${data.fields.available} remaining`}>
+              <span style={{ width: `${Math.min(100, Math.max(0, (data.fields.occupied / data.fields.capacity) * 100))}%` }} />
+            </div>
+            {data.fields.isOverCapacity ? (
+              <p className="overview-warning">This legacy planet is {data.fields.overCapacityBy} fields over capacity. Existing buildings remain active, but new construction is blocked.</p>
+            ) : data.fields.available === 0 ? (
+              <p className="overview-warning">No planetary fields available.</p>
+            ) : data.fields.available <= Math.max(1, Math.ceil(data.fields.capacity * 0.1)) ? (
+              <p className="overview-warning">Planetary fields are nearly full.</p>
+            ) : (
+              <p className="energy-guidance">Each completed building level occupies one field.</p>
+            )}
+          </section>
+
           <section className="panel stack active-construction" aria-labelledby="construction-heading">
             <div className="active-construction-heading">
               <div>
@@ -363,6 +391,10 @@ export default function BuildingsPage() {
                       <div>
                         <dt>Energy effect</dt>
                         <dd>{energyEffectText(building.energyEffect.current)} → {energyEffectText(building.energyEffect.next)}</dd>
+                      </div>
+                      <div>
+                        <dt>Field requirement</dt>
+                        <dd>{building.fieldRequirement}</dd>
                       </div>
                       <div>
                         <dt>Upgrade duration</dt>

@@ -59,6 +59,7 @@ export default function PlanetOverviewPage() {
   const recommendation = planet
     ? selectPlanetNextAction({
         activeConstruction: planet.activeConstruction,
+        fields: planet.fields,
         energyStatus: planet.energy.status,
         energyBlockedBuildingKeys: planet.energyBlockedBuildingKeys,
         buildingLevels,
@@ -88,6 +89,7 @@ export default function PlanetOverviewPage() {
   }
   const buildingsHref = `/game/planets/${planet.identity.id}/buildings`;
   const recommendationHref = recommendation?.kind === 'energy' ? `${buildingsHref}#energy` : buildingsHref;
+  const fieldUsagePercentage = Math.min(100, Math.max(0, (planet.fields.occupied / planet.fields.capacity) * 100));
 
   return (
     <section className="stack planet-command-page" aria-labelledby="planet-command-heading">
@@ -143,6 +145,29 @@ export default function PlanetOverviewPage() {
       </section>
 
       <div className="overview-dashboard-grid">
+        <section className={`panel stack overview-fields${planet.fields.available === 0 ? ' fields-full' : ''}`} aria-labelledby="overview-fields-heading">
+          <div className="section-heading-row">
+            <div><p className="eyebrow">Planetary space</p><h2 id="overview-fields-heading">Building fields</h2></div>
+            <span className="tag">{planet.fields.occupied} / {planet.fields.capacity}</span>
+          </div>
+          <div className="field-capacity-row">
+            <span>{planet.fields.completedUsed} built{planet.fields.reserved > 0 ? ` + ${planet.fields.reserved} under construction` : ''}</span>
+            <strong>{planet.fields.available} remaining</strong>
+          </div>
+          <div className="field-capacity-bar" role="progressbar" aria-label="Planetary building fields occupied" aria-valuemin={0} aria-valuemax={planet.fields.capacity} aria-valuenow={Math.min(planet.fields.capacity, Math.max(0, planet.fields.occupied))} aria-valuetext={`${planet.fields.occupied} of ${planet.fields.capacity} fields occupied; ${planet.fields.available} remaining`}>
+            <span style={{ width: `${fieldUsagePercentage}%` }} />
+          </div>
+          {planet.fields.isOverCapacity ? (
+            <p className="overview-warning">This legacy planet is {planet.fields.overCapacityBy} fields over capacity. Existing buildings remain active, but new construction is blocked.</p>
+          ) : planet.fields.available === 0 ? (
+            <p className="overview-warning">Planetary field capacity is full. No new building upgrade can begin.</p>
+          ) : planet.fields.available <= Math.max(1, Math.ceil(planet.fields.capacity * 0.1)) ? (
+            <p className="overview-warning">Planetary fields are nearly full.</p>
+          ) : (
+            <p className="overview-note">Space remains available for colony development.</p>
+          )}
+        </section>
+
         <section className={`panel stack overview-energy energy-${planet.energy.status}`} aria-labelledby="overview-energy-heading">
           <div className="section-heading-row">
             <div><p className="eyebrow">Planetary grid</p><h2 id="overview-energy-heading">Energy</h2></div>
@@ -196,9 +221,11 @@ export default function PlanetOverviewPage() {
             <h2 id="next-action-heading">{recommendation.title}</h2>
             <p>{recommendation.reason}</p>
           </div>
-          <Link className="btn btn-primary" href={recommendationHref}>
-            {recommendation.kind === 'construction' ? 'View construction' : 'Review buildings'}
-          </Link>
+          {recommendation.kind === 'fields' ? null : (
+            <Link className="btn btn-primary" href={recommendationHref}>
+              {recommendation.kind === 'construction' ? 'View construction' : 'Review buildings'}
+            </Link>
+          )}
         </section>
       ) : null}
     </section>

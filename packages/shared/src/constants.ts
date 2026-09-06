@@ -43,6 +43,8 @@ export interface BuildingDefinition {
   costGrowth: number;
   /** base energy consumed (positive) or produced (negative) at level 1 */
   baseEnergy: number;
+  /** planetary fields occupied by each completed or pending level */
+  fieldCost: number;
   producesResource?: 'alloy' | 'heliox' | 'aether';
 }
 
@@ -55,6 +57,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 60, heliox: 15, aether: 0 },
     costGrowth: 1.5,
     baseEnergy: 10,
+    fieldCost: 1,
     producesResource: 'alloy',
   },
   helioxExtractor: {
@@ -65,6 +68,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 48, heliox: 24, aether: 0 },
     costGrowth: 1.5,
     baseEnergy: 12,
+    fieldCost: 1,
     producesResource: 'heliox',
   },
   aetherSynthesizer: {
@@ -75,6 +79,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 200, heliox: 150, aether: 0 },
     costGrowth: 1.6,
     baseEnergy: 18,
+    fieldCost: 1,
     producesResource: 'aether',
   },
   solarArray: {
@@ -85,6 +90,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 75, heliox: 30, aether: 0 },
     costGrowth: 1.5,
     baseEnergy: -20,
+    fieldCost: 1,
   },
   alloyStorage: {
     key: 'alloyStorage',
@@ -94,6 +100,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 500, heliox: 0, aether: 0 },
     costGrowth: 2,
     baseEnergy: 0,
+    fieldCost: 1,
   },
   helioxStorage: {
     key: 'helioxStorage',
@@ -103,6 +110,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 500, heliox: 250, aether: 0 },
     costGrowth: 2,
     baseEnergy: 0,
+    fieldCost: 1,
   },
   aetherStorage: {
     key: 'aetherStorage',
@@ -112,6 +120,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 800, heliox: 400, aether: 100 },
     costGrowth: 2,
     baseEnergy: 0,
+    fieldCost: 1,
   },
   shipyard: {
     key: 'shipyard',
@@ -121,6 +130,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 400, heliox: 200, aether: 100 },
     costGrowth: 1.6,
     baseEnergy: 0,
+    fieldCost: 1,
   },
   researchLab: {
     key: 'researchLab',
@@ -130,6 +140,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 250, heliox: 400, aether: 100 },
     costGrowth: 1.7,
     baseEnergy: 0,
+    fieldCost: 1,
   },
   gateObservatory: {
     key: 'gateObservatory',
@@ -139,6 +150,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDefinition> = {
     baseCost: { alloy: 1200, heliox: 900, aether: 500 },
     costGrowth: 1.8,
     baseEnergy: 15,
+    fieldCost: 1,
   },
 };
 

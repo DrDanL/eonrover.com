@@ -279,11 +279,53 @@ Attempting a locked start returns HTTP 409 with code `PREREQUISITES_NOT_MET` and
 `details.requirements` list containing every unmet building ID/name plus required and current levels.
 That rejection must not alter resources, `lastProductionAt`, completed levels, the queue, or Redis
 jobs. When several restrictions apply, the displayed/API availability priority is active
-construction, prerequisites, energy, then resources. Complete the required buildings and refresh to
+construction, prerequisites, planetary fields, energy, then resources. Complete the required buildings and refresh to
 confirm the lock disappears; a full volume-preserving restart must derive the same eligibility from
 the persisted completed levels.
 
-Field-capacity limits are intentionally not part of Stage 5C1 and remain deferred to Stage 5C2.
+### Planetary building-field checks
+
+Every new homeworld and colony has a fixed capacity of 180 building fields. Each completed level of
+every current building uses one field, including Solar Array, storage and infrastructure levels. A
+pending accepted upgrade reserves one additional field. Level-zero records, cancelled work and
+completed queue records reserve none: usage is always recalculated from completed `Building.level`
+values plus `PENDING` building rows and is never accepted from the browser.
+
+The command shell, overview and Buildings page show completed, reserved, occupied, available and
+total fields separately from energy. A full planet keeps every building visible, disables eligible
+new starts and displays **No planetary fields available**. Starting the final available field is
+valid; starting one more returns HTTP 409:
+
+```json
+{
+  "error": "No planetary building fields are available.",
+  "code": "PLANET_FIELDS_FULL",
+  "details": {
+    "capacity": 180,
+    "completedUsed": 180,
+    "reserved": 0,
+    "available": 0,
+    "requiredForUpgrade": 1
+  }
+}
+```
+
+The locked validation order is active construction, completed-level prerequisites, planetary
+fields, projected energy, then settled resource affordability. A field rejection therefore leaves
+balances, production time, building levels, PostgreSQL queue rows and BullMQ unchanged. Cancellation
+releases its derived reservation on refresh; completion changes the same field from reserved to
+completed without double counting it.
+
+For a defensive legacy state whose completed levels exceed capacity, the interface clamps available
+fields and progress width safely to zero/100%, reports the over-capacity amount, preserves all
+completed buildings and their production, and blocks only new construction. Already accepted work
+still completes. The migration normally prevents this for existing data: planets below 180 completed
+levels receive 180, while planets already at 180 or more receive their completed use plus 10.
+
+Gate Observatory eligibility currently needs Research Lab 3 + Aether Synthesizer 2 + Solar Array 4,
+or 9 completed fields. Building Gate Observatory level 1 would occupy a tenth, leaving 170 fields of
+the 180-field default. Stage 5C2 intentionally adds no Terraformer, moon, random capacity, or other
+field-expansion mechanic.
 
 ## 7. Testing email verification and account recovery
 

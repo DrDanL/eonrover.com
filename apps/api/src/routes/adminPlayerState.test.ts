@@ -246,6 +246,16 @@ describe('administrator player-state access', () => {
       lastProductionAt: NOW.toISOString(),
       production: { alloy: 33, heliox: 22, aether: 0 },
       energy: { supply: 46.4, demand: 22, efficiency: 1 },
+      fields: {
+        capacity: 180,
+        completedUsed: 4,
+        reserved: 0,
+        occupied: 4,
+        available: 176,
+        isAtCapacity: false,
+        isOverCapacity: false,
+        overCapacityBy: 0,
+      },
       storage: { alloy: 15000, heliox: 10000, aether: 10000 },
       activeConstruction: null,
     });
@@ -298,6 +308,7 @@ describe('administrator player-state access', () => {
     expect(overdueState.resources.alloy).toBeCloseTo(133, 10);
     expect(overdueState.buildings).toEqual(expect.arrayContaining([{ key: 'alloyMine', level: 1 }]));
     expect(overdueState.activeConstruction).toBeNull();
+    expect(overdueState.fields).toMatchObject({ completedUsed: 1, reserved: 0, occupied: 1 });
     expect((await prisma.buildQueueItem.findUniqueOrThrow({ where: { id: overdue.id } })).status).toBe('COMPLETE');
     expect(futureState.buildings).toEqual(expect.arrayContaining([{ key: 'alloyMine', level: 0 }]));
     expect(futureState.activeConstruction).toEqual({
@@ -307,6 +318,7 @@ describe('administrator player-state access', () => {
       startedAt: NOW.toISOString(),
       completesAt: new Date(NOW.getTime() + HOUR_MS).toISOString(),
     });
+    expect(futureState.fields).toMatchObject({ completedUsed: 0, reserved: 1, occupied: 1 });
     expect((await prisma.buildQueueItem.findUniqueOrThrow({ where: { id: future.id } })).status).toBe('PENDING');
   });
 

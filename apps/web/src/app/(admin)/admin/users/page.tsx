@@ -254,6 +254,13 @@ export default function AdminUsersPage() {
                   <p style={{ margin: 0 }}>Aether: {formatNumber(planet.storage.aether)}</p>
                 </div>
                 <div className="panel stack">
+                  <h3 style={{ margin: 0 }}>Building fields</h3>
+                  <p style={{ margin: 0 }}>Occupied: {formatNumber(planet.fields.occupied)} / {formatNumber(planet.fields.capacity)}</p>
+                  <p style={{ margin: 0 }}>Completed: {formatNumber(planet.fields.completedUsed)} · Reserved: {formatNumber(planet.fields.reserved)}</p>
+                  <p style={{ margin: 0 }}>Available: {formatNumber(planet.fields.available)}</p>
+                  {planet.fields.isOverCapacity ? <p className="overview-warning">Over capacity by {formatNumber(planet.fields.overCapacityBy)}.</p> : null}
+                </div>
+                <div className="panel stack">
                   <h3 style={{ margin: 0 }}>Active construction</h3>
                   {planet.activeConstruction ? (
                     <div className="stack" style={{ gap: '0.35rem' }}>

@@ -47,6 +47,7 @@ test('calculates time until storage is full and handles full or idle storage', (
 test('selects the deterministic first missing resource building', () => {
   const action = selectPlanetNextAction({
     activeConstruction: null,
+    fields: { available: 10, isOverCapacity: false },
     energyStatus: 'healthy',
     energyBlockedBuildingKeys: [],
     buildingLevels: { alloyMine: 1, helioxExtractor: 0, aetherSynthesizer: 0 },
@@ -58,6 +59,7 @@ test('selects the deterministic first missing resource building', () => {
 test('prioritises an energy-deficit recommendation', () => {
   const action = selectPlanetNextAction({
     activeConstruction: null,
+    fields: { available: 10, isOverCapacity: false },
     energyStatus: 'deficit',
     energyBlockedBuildingKeys: [],
     buildingLevels: {},
@@ -69,12 +71,26 @@ test('prioritises an energy-deficit recommendation', () => {
 test('prioritises active construction above every other recommendation', () => {
   const action = selectPlanetNextAction({
     activeConstruction: { buildingName: 'Solar Array', targetLevel: 2 },
+    fields: { available: 0, isOverCapacity: false },
     energyStatus: 'deficit',
     energyBlockedBuildingKeys: ['alloyMine'],
     buildingLevels: {},
   });
   assert.equal(action.kind, 'construction');
   assert.match(action.title, /Solar Array level 2/);
+});
+
+test('returns a neutral capacity explanation instead of recommending an upgrade when fields are full', () => {
+  const action = selectPlanetNextAction({
+    activeConstruction: null,
+    fields: { available: 0, isOverCapacity: false },
+    energyStatus: 'deficit',
+    energyBlockedBuildingKeys: ['alloyMine'],
+    buildingLevels: {},
+  });
+  assert.equal(action.kind, 'fields');
+  assert.equal(action.buildingKey, undefined);
+  assert.match(action.reason, /No additional building upgrade/);
 });
 
 test('preserves supported planet sections and otherwise returns to overview', () => {

@@ -1,6 +1,7 @@
 import { Job } from 'bullmq';
 import {
   CombatUnit,
+  DEFAULT_PLANET_FIELD_CAPACITY,
   DEFENCES,
   DefenceKey,
   PLANET_TYPES,
@@ -317,6 +318,7 @@ async function handleArrival(mission: NonNullable<Awaited<ReturnType<typeof load
               planetType: planetTypeToDb[chosen] as never,
               temperature: Math.round(profile.temperatureRange[0] + Math.random() * (profile.temperatureRange[1] - profile.temperatureRange[0])),
               solarIndex: profile.solarIndexRange[0] + Math.random() * (profile.solarIndexRange[1] - profile.solarIndexRange[0]),
+              fieldCapacity: DEFAULT_PLANET_FIELD_CAPACITY,
               buildings: { create: [{ key: 'solarArray', level: 1 }] },
             },
           });
