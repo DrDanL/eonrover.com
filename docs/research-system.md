@@ -46,6 +46,21 @@ existing rounded cost and duration formula. No valid balance value was changed.
 
 ## Next implementation boundaries
 
+## Stage 6B transaction contract
+
+Research start and cancellation lock rows in this order: account, originating
+planet, completed research records, then queue row. A partial unique index on
+pending queue rows by account is the final database guard against concurrent
+starts from separate planets. Each queue row snapshots the accepted three-part
+cost and duration; cancellation refunds `Math.round(snapshot × 0.5)` to the
+originating planet only. Redis is scheduled or removed after the database
+commit, so a Redis failure leaves the committed PostgreSQL state intact.
+
+Only ACTIVE and accurately-described PARTIAL catalogue effects are eligible.
+PLANNED entries reject with `RESEARCH_EFFECT_UNAVAILABLE` without spending
+resources. Completion claiming, recovery, and reconciliation remain Stage 6C
+risks; no player scheduling controls are enabled here.
+
 ### Stage 6B
 
 - atomic research start;

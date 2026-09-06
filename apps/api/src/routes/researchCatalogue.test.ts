@@ -31,6 +31,34 @@ async function player(name: string, options: { alloy?: number; researchLab?: num
 }
 
 describe('read-only research catalogue', () => {
+  it('starts an ACTIVE technology atomically with authoritative snapshots and one account-wide queue', async () => {
+    const owner = await player('research-start', { researchLab: 3 });
+    await prisma.planet.updateMany({ where: { ownerId: owner.user.id }, data: { alloy: 2000, heliox: 2000, aether: 2000, lastProductionAt: NOW } });
+    const body = { key: 'espionageTech', planetId: owner.first.id, targetLevel: 99, cost: { alloy: 0 }, durationSeconds: 1 };
+    const response = await request(app).post('/api/research').set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send(body).expect(201);
+    expect(response.body.queueItem).toMatchObject({ technologyId: 'espionageTech', targetLevel: 1, cost: { alloy: 200, heliox: 400, aether: 20 }, status: 'PENDING' });
+    expect(response.body.queueItem).not.toHaveProperty('jobId');
+    const [first, second] = await Promise.all([
+      request(app).post('/api/research').set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'espionageTech', planetId: owner.first.id }),
+      request(app).post('/api/research').set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'espionageTech', planetId: owner.second.id }),
+    ]);
+    expect([first.status, second.status]).toEqual([409, 409]);
+    expect(await prisma.researchQueueItem.count({ where: { userId: owner.user.id, status: 'PENDING' } })).toBe(1);
+  });
+
+  it('blocks planned effects without a deduction and cancels an active item with one refund to its origin planet', async () => {
+    const owner = await player('research-cancel', { researchLab: 4, alloy: 2000 });
+    await prisma.planet.update({ where: { id: owner.first.id }, data: { aether: 100, lastProductionAt: NOW } });
+    const before = await prisma.planet.findUniqueOrThrow({ where: { id: owner.first.id } });
+    const planned = await request(app).post('/api/research').set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'propulsionTheory', planetId: owner.first.id }).expect(409);
+    expect(planned.body.code).toBe('RESEARCH_EFFECT_UNAVAILABLE');
+    const started = await request(app).post('/api/research').set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'weaponTech', planetId: owner.first.id }).expect(201);
+    const cancelled = await request(app).delete(`/api/research/${started.body.queueItem.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    expect(cancelled.body.refund).toEqual({ alloy: 150, heliox: 150, aether: 20 });
+    await request(app).delete(`/api/research/${started.body.queueItem.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(409);
+    const after = await prisma.planet.findUniqueOrThrow({ where: { id: owner.first.id } });
+    expect(after.alloy).toBeCloseTo(before.alloy - 150);
+  });
   it('requires authentication and ownership for the selected planet', async () => {
     const owner = await player('research-owner');
     const other = await player('research-other');
@@ -68,7 +96,7 @@ describe('read-only research catalogue', () => {
     const owner = await player('research-settle', { researchLab: 0 });
     await prisma.buildQueueItem.create({ data: { planetId: owner.first.id, buildingKey: 'researchLab', targetLevel: 1, costAlloy: 250, costHeliox: 400, costAether: 100, startedAt: new Date(NOW.getTime() - 2000), completesAt: new Date(NOW.getTime() - 1000) } });
     await prisma.research.create({ data: { userId: owner.user.id, key: 'weaponTech', level: 1 } });
-    await prisma.researchQueueItem.create({ data: { planetId: owner.second.id, researchKey: 'weaponTech', targetLevel: 2, completesAt: new Date(NOW.getTime() + 60000) } });
+    await prisma.researchQueueItem.create({ data: { userId: owner.user.id, planetId: owner.second.id, researchKey: 'weaponTech', targetLevel: 2, costAlloy: 510, costHeliox: 510, costAether: 68, durationSeconds: 60, completesAt: new Date(NOW.getTime() + 60000) } });
     const before = await prisma.research.findMany({ where: { userId: owner.user.id } });
     const response = await request(app).get(`/api/research?planetId=${owner.first.id}`).set('Cookie', owner.cookie).expect(200);
     expect(response.body.selectedPlanet.researchLabLevel).toBe(1);

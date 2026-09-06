@@ -12,11 +12,12 @@ import {
 } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
-import { syncPlanetResources } from '../services/planetService';
-import { getBuildingLevels, getResearchLevels, requirementsMet } from '../services/requirements';
+import { syncLockedPlanetResources, syncPlanetResources } from '../services/planetService';
+import { getResearchLevels } from '../services/requirements';
 import { researchQueue } from '../lib/redis';
 import { getUniverseConfig } from '../services/gameConfig';
-import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
+import { AppError, asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
+import { Prisma } from '@prisma/client';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
@@ -115,6 +116,29 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 const enqueueSchema = z.object({ key: z.string(), planetId: z.string() });
+const START_TRANSACTION_ATTEMPTS = 3;
+
+function presentRequirements(key: ResearchKey, research: Record<string, number>, buildings: Record<string, number>) {
+  return RESEARCH_BY_ID[key].requirements.map((requirement) => {
+    const currentLevel = requirement.kind === 'building' ? (buildings[requirement.id] ?? 0) : (research[requirement.id] ?? 0);
+    return { type: requirement.kind, id: requirement.id, name: requirement.kind === 'building' ? BUILDINGS[requirement.id].name : RESEARCH_BY_ID[requirement.id].name, requiredLevel: requirement.level, currentLevel, met: currentLevel >= requirement.level };
+  });
+}
+
+function presentQueueItem(item: { id: string; researchKey: string; targetLevel: number; costAlloy: number; costHeliox: number; costAether: number; durationSeconds: number; startedAt: Date; completesAt: Date; status: string; planet: { id: string; name: string } }) {
+  return { id: item.id, technologyId: item.researchKey, technologyName: RESEARCH_BY_ID[item.researchKey as ResearchKey]?.name ?? item.researchKey, originatingPlanet: item.planet, targetLevel: item.targetLevel, cost: { alloy: item.costAlloy, heliox: item.costHeliox, aether: item.costAether }, durationSeconds: item.durationSeconds, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status };
+}
+
+async function scheduleResearchCompletion(item: { id: string; userId: string; completesAt: Date }): Promise<boolean> {
+  const jobId = `research-${item.id}`;
+  try {
+    await researchQueue.add('complete-research', { queueItemId: item.id, userId: item.userId }, { jobId, delay: Math.max(0, item.completesAt.getTime() - Date.now()), removeOnComplete: true, attempts: 3 });
+    await prisma.researchQueueItem.updateMany({ where: { id: item.id, status: 'PENDING' }, data: { jobId } });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 router.post('/', asyncHandler(async (req, res) => {
   const parsed = enqueueSchema.safeParse(req.body);
@@ -126,63 +150,75 @@ router.post('/', asyncHandler(async (req, res) => {
     sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Unknown research');
     return;
   }
-  const planet = await assertOwnedPlanet(parsed.data.planetId, req.user!.id);
-  if (!planet) {
-    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
-    return;
-  }
   const key = parsed.data.key as ResearchKey;
-
-  const alreadyQueued = await prisma.researchQueueItem.findFirst({
-    where: { planet: { ownerId: req.user!.id }, status: 'PENDING' },
-  });
-  if (alreadyQueued) {
-    sendError(res, 409, ERROR_CODES.CONFLICT, 'Only one research can be active at a time');
-    return;
-  }
-
-  const [buildingLevels, researchLevels] = await Promise.all([
-    getBuildingLevels(planet.id),
-    getResearchLevels(req.user!.id),
-  ]);
-  const def = RESEARCH_BY_ID[key];
-  const legacyRequirements = Object.fromEntries(def.requirements.map((requirement) => [requirement.id, requirement.level]));
-  if (!requirementsMet(legacyRequirements, buildingLevels, researchLevels)) {
-    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requirements not met');
-    return;
-  }
-  const targetLevel = (researchLevels[key] ?? 0) + 1;
-  const cost = researchCost(key, targetLevel);
-
-  const { planet: fresh } = await syncPlanetResources(planet.id);
-  if (fresh.alloy < cost.alloy || fresh.heliox < cost.heliox || fresh.aether < cost.aether) {
-    sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources', { cost });
-    return;
-  }
-
   const config = await getUniverseConfig();
-  const durationSeconds = researchDurationSeconds(cost, buildingLevels.researchLab ?? 0, config.researchSpeed);
-  const completesAt = new Date(Date.now() + durationSeconds * 1000);
+  const startedAt = new Date();
+  let accepted: Awaited<ReturnType<typeof prisma.researchQueueItem.create>> | null = null;
+  for (let attempt = 0; attempt < START_TRANSACTION_ATTEMPTS; attempt += 1) {
+    try {
+      accepted = await prisma.$transaction(async (tx) => {
+        // Lock order: account, selected planet, completed research, queue row.
+        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user!.id} FOR UPDATE`;
+        const account = await tx.user.findUnique({ where: { id: req.user!.id } });
+        if (!account || account.status !== 'ACTIVE') throw new AppError(403, ERROR_CODES.ACCOUNT_UNAVAILABLE, 'This account is unavailable.');
+        await tx.$queryRaw`SELECT "id" FROM "Planet" WHERE "id" = ${parsed.data.planetId} FOR UPDATE`;
+        const planet = await tx.planet.findUnique({ where: { id: parsed.data.planetId } });
+        if (!planet || planet.ownerId !== account.id) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Planet not found');
+        const active = await tx.researchQueueItem.findFirst({ where: { userId: account.id, status: 'PENDING' }, select: { id: true } });
+        if (active) throw new AppError(409, ERROR_CODES.RESEARCH_IN_PROGRESS, 'Another research item is already active.');
+        const rows = await tx.research.findMany({ where: { userId: account.id } });
+        const researchLevels = Object.fromEntries(rows.map((row) => [row.key, row.level]));
+        const buildings = await tx.building.findMany({ where: { planetId: planet.id } });
+        const buildingLevels = Object.fromEntries(buildings.map((row) => [row.key, row.level]));
+        const requirements = presentRequirements(key, researchLevels, buildingLevels);
+        const unmet = requirements.filter((requirement) => !requirement.met);
+        if (unmet.length) throw new AppError(409, ERROR_CODES.RESEARCH_REQUIREMENTS_NOT_MET, 'Research requirements have not been met.', { requirements: unmet });
+        if (RESEARCH_BY_ID[key].effect.status === 'PLANNED') throw new AppError(409, ERROR_CODES.RESEARCH_EFFECT_UNAVAILABLE, 'This technology is not yet available for research.');
+        const synced = await syncLockedPlanetResources(tx, planet, startedAt, config.economySpeed);
+        const targetLevel = (researchLevels[key] ?? 0) + 1;
+        const cost = researchCost(key, targetLevel);
+        if (synced.planet.alloy < cost.alloy || synced.planet.heliox < cost.heliox || synced.planet.aether < cost.aether) throw new AppError(402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources', { cost });
+        const durationSeconds = researchDurationSeconds(cost, buildingLevels.researchLab ?? 0, config.researchSpeed);
+        const completesAt = new Date(startedAt.getTime() + durationSeconds * 1000);
+        await tx.planet.update({ where: { id: planet.id }, data: { alloy: synced.planet.alloy - cost.alloy, heliox: synced.planet.heliox - cost.heliox, aether: synced.planet.aether - cost.aether } });
+        return tx.researchQueueItem.create({ data: { userId: account.id, planetId: planet.id, researchKey: key, targetLevel, costAlloy: cost.alloy, costHeliox: cost.heliox, costAether: cost.aether, durationSeconds, startedAt, completesAt } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      break;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034' && attempt + 1 < START_TRANSACTION_ATTEMPTS) continue;
+      throw error;
+    }
+  }
+  if (!accepted) throw new AppError(503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Research could not be started. Please try again.');
+  const scheduled = await scheduleResearchCompletion(accepted);
+  const queue = await prisma.researchQueueItem.findUniqueOrThrow({ where: { id: accepted.id }, include: { planet: { select: { id: true, name: true } } } });
+  res.status(201).json({ queueItem: presentQueueItem(queue), scheduling: scheduled ? 'scheduled' : 'pending' });
+}));
 
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.planet.update({
-      where: { id: planet.id },
-      data: { alloy: { decrement: cost.alloy }, heliox: { decrement: cost.heliox }, aether: { decrement: cost.aether } },
-    });
-    return tx.researchQueueItem.create({
-      data: { planetId: planet.id, researchKey: key, targetLevel, completesAt },
-    });
+router.delete('/:queueItemId', asyncHandler(async (req, res) => {
+  const now = new Date();
+  const configForCancel = await getUniverseConfig();
+  const initial = await prisma.researchQueueItem.findUnique({ where: { id: req.params.queueItemId }, select: { planetId: true } });
+  if (!initial) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Research not found'); return; }
+  const cancelled = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${req.user!.id} FOR UPDATE`;
+    const account = await tx.user.findUnique({ where: { id: req.user!.id } });
+    if (!account || account.status !== 'ACTIVE') throw new AppError(403, ERROR_CODES.ACCOUNT_UNAVAILABLE, 'This account is unavailable.');
+    await tx.$queryRaw`SELECT "id" FROM "Planet" WHERE "id" = ${initial.planetId} FOR UPDATE`;
+    const planet = await tx.planet.findUnique({ where: { id: initial.planetId } });
+    await tx.$queryRaw`SELECT "id" FROM "ResearchQueueItem" WHERE "id" = ${req.params.queueItemId} FOR UPDATE`;
+    const item = await tx.researchQueueItem.findUnique({ where: { id: req.params.queueItemId } });
+    if (!item || !planet || item.userId !== account.id || planet.ownerId !== account.id) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Research not found');
+    if (item.status !== 'PENDING' || item.completesAt <= now) throw new AppError(409, ERROR_CODES.RESEARCH_NOT_CANCELLABLE, 'This research item can no longer be cancelled.');
+    const synced = await syncLockedPlanetResources(tx, planet, now, configForCancel.economySpeed);
+    const refund = { alloy: Math.round(item.costAlloy * 0.5), heliox: Math.round(item.costHeliox * 0.5), aether: Math.round(item.costAether * 0.5) };
+    const updated = await tx.researchQueueItem.updateMany({ where: { id: item.id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
+    if (updated.count !== 1) throw new AppError(409, ERROR_CODES.RESEARCH_NOT_CANCELLABLE, 'This research item can no longer be cancelled.');
+    await tx.planet.update({ where: { id: planet.id }, data: { alloy: synced.planet.alloy + refund.alloy, heliox: synced.planet.heliox + refund.heliox, aether: synced.planet.aether + refund.aether } });
+    return { item, refund };
   });
-
-  const delay = Math.max(0, completesAt.getTime() - Date.now());
-  const job = await researchQueue.add(
-    'complete-research',
-    { queueItemId: result.id, userId: req.user!.id },
-    { delay, removeOnComplete: true, attempts: 3 },
-  );
-  await prisma.researchQueueItem.update({ where: { id: result.id }, data: { jobId: job.id } });
-
-  res.status(201).json({ queueItem: { ...result, jobId: job.id } });
+  try { await researchQueue.remove(`research-${cancelled.item.id}`); } catch { /* PostgreSQL cancellation remains authoritative. */ }
+  res.json({ queueItem: { id: cancelled.item.id, status: 'CANCELLED' }, refund: cancelled.refund });
 }));
 
 export default router;

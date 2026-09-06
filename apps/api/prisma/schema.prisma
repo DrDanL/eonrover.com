@@ -47,6 +47,7 @@ model User {
   auditLogs         AuditLog[]
   securityEvents    SecurityEvent[]
   gateFragments     GateFragment[]
+  researchQueue     ResearchQueueItem[]
 
   @@index([status])
 }
@@ -172,16 +173,23 @@ model Research {
 
 model ResearchQueueItem {
   id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   planetId    String
   planet      Planet      @relation(fields: [planetId], references: [id], onDelete: Cascade)
   researchKey String
   targetLevel Int
+  costAlloy   Int
+  costHeliox  Int
+  costAether  Int
+  durationSeconds Int
   startedAt   DateTime    @default(now())
   completesAt DateTime
   status      QueueStatus @default(PENDING)
   jobId       String?
 
   @@index([planetId, status])
+  @@index([userId, status])
 }
 
 model Ship {
