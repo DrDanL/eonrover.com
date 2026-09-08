@@ -328,6 +328,36 @@ export interface FleetMission {
   resultSummary?: unknown;
 }
 
+export interface FleetDeploymentsResponse {
+  selectedOrigin: {
+    id: string;
+    name: string;
+    coordinates: { galaxy: number; system: number; slot: number };
+    heliox: number;
+    ships: Array<{ key: string; count: number }>;
+  };
+  eligibleDestinations: Array<{
+    id: string;
+    name: string;
+    coordinates: { galaxy: number; system: number; slot: number };
+  }>;
+  supportedSpeedOptions: number[];
+  activeDeployment: {
+    id: string;
+    destination: {
+      id: string;
+      name: string;
+      coordinates: { galaxy: number; system: number; slot: number };
+    };
+    ships: Record<string, number>;
+    fuelHeliox: number;
+    durationSeconds: number;
+    departedAt: string;
+    arrivesAt: string;
+    status: string;
+  } | null;
+}
+
 export interface GalaxySlot {
   slot: number;
   empty: boolean;
