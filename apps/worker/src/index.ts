@@ -9,6 +9,7 @@ const { createHealthHandler } = require('./health') as typeof import('./health')
 const { processBuildJob } = require('./processors/buildProcessor') as typeof import('./processors/buildProcessor');
 const { processResearchJob } = require('./processors/researchProcessor') as typeof import('./processors/researchProcessor');
 const { processShipyardJob } = require('./processors/shipyardProcessor') as typeof import('./processors/shipyardProcessor');
+const { processDeployArrivalJob } = require('./processors/deployArrivalProcessor') as typeof import('./processors/deployArrivalProcessor');
 const {
   reconcilePendingBuildingJobs,
   startBuildingReconciliation,
@@ -43,18 +44,22 @@ const researchWorker = new Worker('research-queue', processResearchJob, { connec
 const researchReconciliationQueue = new Queue('research-queue', { connection });
 const shipyardWorker = new Worker('shipyard-queue', processShipyardJob, { connection });
 const shipyardReconciliationQueue = new Queue('shipyard-queue', { connection });
+// This worker is deliberately a wake-up consumer only. It has no startup or
+// recurring reconciliation; recovery of a lost Redis job is a later stage.
+const deployArrivalWorker = new Worker('deploy-arrival-queue', processDeployArrivalJob, { connection });
 
 for (const [name, worker] of [
   ['build-queue', buildWorker],
   ['research-queue', researchWorker],
   ['shipyard-queue', shipyardWorker],
+  ['deploy-arrival-queue', deployArrivalWorker],
 ] as const) {
   worker.on('completed', logCompletion(name));
   worker.on('failed', logFailure(name));
 }
 
 // eslint-disable-next-line no-console
-console.log('Eon Rover worker started, listening for build/research/shipyard events. Legacy fleet jobs are intentionally not consumed.');
+console.log('Eon Rover worker started, listening for build/research/shipyard/deploy-arrival events. Legacy fleet jobs are intentionally not consumed.');
 
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
@@ -134,6 +139,7 @@ async function shutdown() {
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),
+    deployArrivalWorker.close(),
   ]);
   process.exit(0);
 }

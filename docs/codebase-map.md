@@ -19,7 +19,10 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - Stage 7D1 enables Shipyard player controls for accepted batches (quantity 1–100, one pending batch per planet, persisted timing/refund presentation and cancellation). PostgreSQL remains authoritative; BullMQ only wakes completion. Browser visual smoke verification is deferred.
 - Stage 8B1 prepares only persistence and pure validation for a future owned-planet DEPLOY lifecycle; no Fleet route, worker, or player control is enabled.
 - Stage 8B2a deliberately disables unsafe legacy Fleet API routes and worker job consumption; queued legacy jobs and database rows are preserved pending the trusted deploy lifecycle.
-- Stage 8B2b adds an internal-only, serializable owned-planet DEPLOY launch transaction. PostgreSQL synchronises and reserves only the origin's ships and Heliox before it stores canonical server-derived snapshots; no API, worker wake-up, completion, reconciliation, or player control is enabled yet.
+- Stage 8B2b adds an internal-only, serializable owned-planet DEPLOY launch transaction. PostgreSQL synchronises and reserves only the origin's ships and Heliox before it stores canonical server-derived snapshots; no public API or player control is enabled.
+- Stage 8B2c adds internal-only, serializable DEPLOY arrival completion. It transfers only the persisted canonical manifest to the canonical owned destination, marks the mission complete, and records one notification atomically; early, legacy, malformed, terminal, and ownership-inconsistent rows are no-ops.
+- Stage 8B2d adds an internal-only deterministic deploy-arrival wake-up producer. It reads committed canonical mission state and creates a minimal, deploy-specific BullMQ wake-up without changing PostgreSQL.
+- Stage 8B2e wires that wake-up after the committed deploy launch only, and registers a dedicated deploy-arrival worker that trusts only the mission ID, uses PostgreSQL for due-time and completion state, and safely reschedules early delivery. There is no deploy reconciliation, restart repair, Fleet API, or player control yet.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 
@@ -46,7 +49,7 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Research and technology progression | Partially implemented | A central typed catalogue, atomic account-wide start/cancellation, and durable PostgreSQL-authoritative completion are implemented. Completion locks account → origin planet → queue, applies persisted target/deadline and one notification atomically, and a 100-row startup/30-second reconciler restores deterministic BullMQ jobs. The authenticated catalogue remains read-only and the player interface is deferred to Stage 6D. Economy research has no production-boundary integration yet because no active/partial effect changes lazy production. |
 | Shipyard and fleet construction | Partially implemented | API-only Shipyard batches use persisted snapshots, cancellation and PostgreSQL-authoritative, exactly-once batch completion. The Shipyard worker/API fallback and bounded reconciler use Redis only as a deterministic wake-up. Fleet remains a prototype. |
 | Galaxy and solar-system navigation | Partially implemented | A protected galaxy browser renders 12 slots from live data. Query/mission coordinates have no configured upper bounds, and the screen does not launch context-aware missions. |
-| Fleet missions and travel | Unsafe prototype contained | Legacy Fleet routes return an authenticated unavailable boundary and no worker consumes legacy jobs. An internal-only owned-planet DEPLOY launch transaction now reserves canonical assets, but completion/recovery is not implemented and Fleet remains unavailable to players. |
+| Fleet missions and travel | Unsafe prototype contained | Legacy Fleet routes return an authenticated unavailable boundary and no worker consumes legacy jobs. Internal-only owned-planet DEPLOY launch dispatches a dedicated deterministic wake-up after commit; its worker reloads PostgreSQL and completes the canonical arrival idempotently. Reconciliation/restart repair and Fleet player access remain unavailable. |
 | Exploration | Partially implemented | `EXPLORE` is dispatched and has a server-side 20% Gate Fragment outcome. It lacks ship/target constraints, meaningful non-fragment outcomes, reports, and balancing controls. |
 | Colonisation | Partially implemented | A colony ship can found a persisted random planet in an empty coordinate. Maximum planets is ignored, cargo is lost, multi-colony-ship handling is incorrect, and concurrency relies only on the database uniqueness error path. |
 | Espionage | Partially implemented | Server-side reports and technology-based accuracy exist. Any ship can run the mission, reports always contain the full dataset regardless of accuracy, target resources can be stale, and detection is unconditional. |
@@ -109,9 +112,9 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src
-│   │       ├── index.ts          three active workers, reconcilers, liveness/readiness
+│   │       ├── index.ts          four active workers, three reconcilers, liveness/readiness
 │   │       ├── prisma.ts, redis.ts, queues.ts
-│   │       ├── processors        build, research, shipyard, plus dormant legacy fleet resolution
+│   │       ├── processors        build, research, shipyard, internal deploy arrival, plus dormant legacy fleet resolution
 │   │       ├── buildingCompletion.ts, buildingReconciler.ts
 │   │       ├── *.test.ts         processor/completion/reconciliation tests
 │   │       └── testSetup.ts      same isolated-database guard as API tests
@@ -412,7 +415,7 @@ Server-calculated, exploit-resistant, and retry-safe are accurate for the checkp
 
 ## Background jobs, queues, and timed-event handling
 
-`apps/api/src/lib/redis.ts:12` creates four BullMQ queues:
+`apps/api/src/lib/redis.ts` creates five BullMQ queues:
 
 | Queue | Created by | Worker effect |
 | --- | --- | --- |
@@ -420,6 +423,7 @@ Server-calculated, exploit-resistant, and retry-safe are accurate for the checkp
 | `research-queue` | Research route | Upserts account research using job `userId`, completes row, notifies. |
 | `shipyard-queue` | Shipyard route, processor and reconciler | Completes the persisted accepted batch once at its persisted due time, creates one notification, and restores missing deterministic wake-ups. |
 | `fleet-queue` | Legacy prototype only | Queued legacy jobs are preserved but deliberately have no registered worker consumer pending the trusted deploy lifecycle. |
+| `deploy-arrival-queue` | Internal Stage 8B2e launch and dedicated worker | A minimal deterministic wake-up is dispatched after canonical launch commits. The worker reads only its mission ID, uses persisted arrival time for early rescheduling, and calls the PostgreSQL-authoritative completion service. It has no reconciliation or restart repair loop. |
 
 Building creation first commits PostgreSQL state and then best-effort enqueues a deterministic Redis job. The worker scans all pending building rows at startup and every 30 seconds, preserves live jobs, replaces failed/missing jobs, and writes the deterministic ID back. Research, shipyard, and fleet flows do not yet have equivalent reconciliation or an outbox.
 
@@ -429,7 +433,7 @@ Processor-specific hazards:
 
 - Building completion locks planet then construction, conditionally claims `PENDING`, and commits production, level, status, and one notification together. Research retains the earlier non-claiming behavior.
 - Shipyard commits the unit increment before scheduling/updating the next unit. A failure in between causes a retry to add the same unit again.
-- Legacy fleet arrival/return code retains its original unsafe behavior but is deliberately dormant: no worker registers a `fleet-queue` consumer until the trusted deploy lifecycle has safe completion and recovery.
+- Legacy fleet arrival/return code retains its original unsafe behavior but is deliberately dormant: no worker registers a `fleet-queue` consumer. The separate `deploy-arrival-queue` accepts only canonical owned-planet DEPLOY wake-ups.
 - Admin job deletion removes only Redis state (`admin.ts:170`), with no queue-record transition or refund.
 - Worker `/healthz` is liveness-only; `/readyz` independently checks PostgreSQL and Redis and is used by Compose.
 
@@ -443,7 +447,7 @@ Processor-specific hazards:
 | `redis` | Configurable host port, container 6379 | `redis_data`; unauthenticated Redis 7 with periodic RDB snapshots. |
 | `mailpit` | Configurable HTTP/SMTP host ports | `mailpit_data`; image is unpinned `latest`. |
 | `api` | Configurable `PORT` | Waits for infrastructure; container command runs `prisma migrate deploy`, then the development-only optional admin provisioner, then Express; readiness checks PostgreSQL/Redis. |
-| `worker` | Internal configurable health port | Waits for API and infrastructure; starts four workers plus building reconciliation; readiness checks PostgreSQL/Redis. |
+| `worker` | Internal configurable health port | Waits for API and infrastructure; starts build, research, Shipyard, and internal deploy-arrival workers plus the existing building/research/Shipyard reconciliation; readiness checks PostgreSQL/Redis. |
 | `web` | Configurable host port, container 3000 | Builds browser API URL into Next bundle and waits for API. |
 
 Expected Docker run path from `README.md` is `cp .env.example .env` followed by `docker compose up --build`. Expected direct-development path is npm install, build shared, apply Prisma migrations, then run API, worker, and web in separate terminals with PostgreSQL, Redis, and Mailpit already available.

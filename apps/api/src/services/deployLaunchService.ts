@@ -3,6 +3,10 @@ import { DeployPlan, planDeploy } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
+import {
+  DeployArrivalSchedulingOutcome,
+  scheduleDeployArrivalWakeup,
+} from './deployArrivalSchedulingService';
 
 const SERIALIZABLE_TRANSACTION_ATTEMPTS = 3;
 
@@ -44,6 +48,8 @@ export interface AcceptedDeployLaunch {
   durationSeconds: number;
   departedAt: Date;
   arrivesAt: Date;
+  /** Best-effort Redis wake-up result; PostgreSQL acceptance is already final. */
+  schedulingOutcome: DeployArrivalSchedulingOutcome;
 }
 
 function isRetryableTransactionError(error: unknown): boolean {
@@ -83,8 +89,8 @@ function deployPlan(input: DeployLaunchInput, origin: { galaxy: number; system: 
 
 /**
  * Atomically reserves ships and one-way Heliox for a future owned-planet
- * DEPLOY mission. PostgreSQL is authoritative; this stage intentionally does
- * not schedule a worker wake-up or expose a public route.
+ * DEPLOY mission. PostgreSQL is authoritative; the Redis wake-up is attempted
+ * only after the serializable reservation transaction commits.
  */
 export async function launchOwnedPlanetDeploy(input: DeployLaunchInput): Promise<AcceptedDeployLaunch> {
   assertLaunchInput(input);
@@ -92,7 +98,7 @@ export async function launchOwnedPlanetDeploy(input: DeployLaunchInput): Promise
 
   for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const accepted = await prisma.$transaction(async (tx) => {
         // Canonical lock order: account → origin → destination → selected
         // origin inventory → fleet mission.
         await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.accountId} FOR UPDATE`;
@@ -196,6 +202,13 @@ export async function launchOwnedPlanetDeploy(input: DeployLaunchInput): Promise
           arrivesAt,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // The mission, reserved ships, and accepted Heliox are committed before
+      // touching Redis. A wake-up failure is observable but never rolls back
+      // or retries the authoritative acceptance transaction.
+      return {
+        ...accepted,
+        schedulingOutcome: await scheduleDeployArrivalWakeup(accepted.missionId),
+      };
     } catch (error) {
       if (error instanceof DeployLaunchError) throw error;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

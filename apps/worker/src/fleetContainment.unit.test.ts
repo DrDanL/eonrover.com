@@ -6,5 +6,6 @@ describe('legacy fleet worker containment', () => {
     const source = readFileSync(resolve(__dirname, 'index.ts'), 'utf8');
     expect(source).not.toContain("new Worker('fleet-queue'");
     expect(source).not.toContain('processFleetJob');
+    expect(source).toContain("new Worker('deploy-arrival-queue'");
   });
 });

@@ -26,3 +26,4 @@ __exportStar(require("./researchCompletion"), exports);
 __exportStar(require("./shipyardCatalogue"), exports);
 __exportStar(require("./shipyardCompletion"), exports);
 __exportStar(require("./deployMission"), exports);
+__exportStar(require("./deployArrivalCompletion"), exports);

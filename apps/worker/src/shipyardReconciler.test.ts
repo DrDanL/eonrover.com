@@ -27,7 +27,7 @@ describe('Shipyard authoritative completion and recovery', () => {
     expect(queue.add).toHaveBeenCalledWith('complete-shipyard-unit', { queueItemId: future.item.id }, expect.objectContaining({ jobId: shipyardCompletionJobId(future.item.id) }));
   });
   it('reschedules an early forged Redis delivery at the persisted due time without side effects', async () => {
-    const f = await fixture(new Date(NOW.getTime() + 60_000), 4);
+    const f = await fixture(new Date(Date.now() + 60_000), 4);
     const job = { data: { queueItemId: f.item.id, userId: 'forged', planetId: 'wrong', shipKey: 'probe', quantity: 999 }, token: 'token', moveToDelayed: jest.fn() };
     await processShipyardJob(job as never);
     expect(job.moveToDelayed).toHaveBeenCalledWith(f.item.completesAt.getTime(), 'token');

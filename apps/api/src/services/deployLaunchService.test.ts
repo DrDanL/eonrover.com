@@ -1,7 +1,8 @@
 import { planDeploy } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
-import { fleetQueue } from '../lib/redis';
+import { deployArrivalQueue } from '../lib/redis';
 import { DeployLaunchInput, launchOwnedPlanetDeploy } from './deployLaunchService';
+import { DEPLOY_ARRIVAL_JOB_NAME, deployArrivalJobId } from './deployArrivalSchedulingService';
 import { invalidateUniverseConfigCache } from './gameConfig';
 
 let coordinate = 1;
@@ -74,7 +75,7 @@ describe('launchOwnedPlanetDeploy', () => {
   it('persists canonical snapshots while atomically reserving only origin ships and Heliox', async () => {
     const fixture = await ownedDeployFixture({ scouts: 5, transporters: 3 });
     const beforeOrigin = await prisma.planet.findUniqueOrThrow({ where: { id: fixture.origin.id } });
-    const addJob = jest.spyOn(fleetQueue, 'add');
+    const addJob = jest.spyOn(deployArrivalQueue, 'add');
 
     const accepted = await launchOwnedPlanetDeploy(input(fixture, { transporter: 2, scout: 3 }));
     const expected = planDeploy({
@@ -119,7 +120,32 @@ describe('launchOwnedPlanetDeploy', () => {
     expect(await prisma.notification.count()).toBe(0);
     expect(await prisma.combatReport.count()).toBe(0);
     expect(await prisma.espionageReport.count()).toBe(0);
-    expect(addJob).not.toHaveBeenCalled();
+    expect(accepted.schedulingOutcome).toBe('scheduled');
+    expect(addJob).toHaveBeenCalledTimes(1);
+    const job = await deployArrivalQueue.getJob(deployArrivalJobId(accepted.missionId));
+    expect(job).toMatchObject({ name: DEPLOY_ARRIVAL_JOB_NAME, data: { missionId: accepted.missionId } });
+    expect(job?.opts.jobId).toBe(deployArrivalJobId(accepted.missionId));
+    await job?.remove();
+    addJob.mockRestore();
+  });
+
+  it('preserves a committed reservation when post-commit Redis dispatch fails', async () => {
+    const fixture = await ownedDeployFixture({ scouts: 5 });
+    const before = await prisma.planet.findUniqueOrThrow({ where: { id: fixture.origin.id } });
+    const addJob = jest.spyOn(deployArrivalQueue, 'add').mockRejectedValueOnce(new Error('Redis unavailable'));
+
+    const accepted = await launchOwnedPlanetDeploy(input(fixture, { scout: 2 }));
+
+    const [mission, ships, origin] = await Promise.all([
+      prisma.fleetMission.findUniqueOrThrow({ where: { id: accepted.missionId } }),
+      prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: fixture.origin.id, key: 'scout' } } }),
+      prisma.planet.findUniqueOrThrow({ where: { id: fixture.origin.id } }),
+    ]);
+    expect(accepted.schedulingOutcome).toBe('failed');
+    expect(mission).toMatchObject({ status: 'OUTBOUND', deployShips: { scout: 2 } });
+    expect(ships.count).toBe(3);
+    expect(origin.heliox).toBe(before.heliox - mission.deployFuelHeliox!);
+    expect(await deployArrivalQueue.getJob(deployArrivalJobId(accepted.missionId))).toBeUndefined();
     addJob.mockRestore();
   });
 
