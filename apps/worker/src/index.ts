@@ -18,6 +18,10 @@ const {
   reconcilePendingResearchJobs,
   startResearchReconciliation,
 } = require('./researchReconciler') as typeof import('./researchReconciler');
+const {
+  reconcilePendingShipyardJobs,
+  startShipyardReconciliation,
+} = require('./shipyardReconciler') as typeof import('./shipyardReconciler');
 const connection = createRedisConnection();
 
 function logCompletion(name: string) {
@@ -39,6 +43,7 @@ const buildReconciliationQueue = new Queue('build-queue', { connection });
 const researchWorker = new Worker('research-queue', processResearchJob, { connection });
 const researchReconciliationQueue = new Queue('research-queue', { connection });
 const shipyardWorker = new Worker('shipyard-queue', processShipyardJob, { connection });
+const shipyardReconciliationQueue = new Queue('shipyard-queue', { connection });
 const fleetWorker = new Worker('fleet-queue', processFleetJob, { connection });
 
 for (const [name, worker] of [
@@ -57,6 +62,7 @@ console.log('Eon Rover worker started, listening for build/research/shipyard/fle
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
 let researchReconciliation: ReturnType<typeof startResearchReconciliation> | undefined;
+let shipyardReconciliation: ReturnType<typeof startShipyardReconciliation> | undefined;
 void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
@@ -72,6 +78,23 @@ void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUnt
   .catch((error: unknown) => {
     // eslint-disable-next-line no-console
     console.error('[build-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
+  });
+
+void Promise.all([shipyardWorker.waitUntilReady(), shipyardReconciliationQueue.waitUntilReady()])
+  .then(() => {
+    if (shuttingDown) return;
+    shipyardReconciliation = startShipyardReconciliation(
+      () => reconcilePendingShipyardJobs(prisma, shipyardReconciliationQueue),
+      undefined,
+      (error) => {
+        // eslint-disable-next-line no-console
+        console.error('[shipyard-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
+      },
+    );
+  })
+  .catch((error: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('[shipyard-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
   });
 
 void Promise.all([researchWorker.waitUntilReady(), researchReconciliationQueue.waitUntilReady()])
@@ -105,10 +128,12 @@ async function shutdown() {
   shuttingDown = true;
   buildingReconciliation?.stop();
   researchReconciliation?.stop();
+  shipyardReconciliation?.stop();
   healthServer.close();
   await Promise.all([
     buildReconciliationQueue.close(),
     researchReconciliationQueue.close(),
+    shipyardReconciliationQueue.close(),
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),

@@ -3,6 +3,7 @@ import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { SESSION_COOKIE, sessionTokenDigest } from '../lib/auth';
 import { shipyardQueue } from '../lib/redis';
+import { completeShipyardBatch } from '@eonrover/shared';
 
 const app = createApp();
 let slot = 700;
@@ -83,5 +84,44 @@ describe('read-only Shipyard catalogue', () => {
     expect(acceptedWithoutRedis.body.scheduling).toBe('pending');
     expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: acceptedWithoutRedis.body.queueItem.id } })).toMatchObject({ status: 'PENDING', costAlloy: 2000, costHeliox: 1000 });
     jest.restoreAllMocks();
+  });
+
+  it('settles an overdue persisted batch once before presenting the catalogue', async () => {
+    const owner = await player('shipyard-overdue');
+    const item = await prisma.shipyardQueueItem.create({ data: {
+      planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 3, remaining: 3,
+      costAlloy: 6000, costHeliox: 3000, costAether: 0, durationSeconds: 900,
+      completesAt: new Date(Date.now() - 1),
+    } });
+    const get = () => request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
+    const first = await get(); await get();
+    expect(first.body.catalog.find((entry: { id: string }) => entry.id === 'scout')).toMatchObject({ owned: 3 });
+    expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: 'COMPLETE', remaining: 0 });
+    expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
+  });
+  it('settles overdue cancellation as completion with no refund', async () => {
+    const owner = await player('shipyard-overdue-cancel');
+    const before = await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } });
+    const item = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 2, remaining: 2, costAlloy: 2000, costHeliox: 1000, costAether: 0, durationSeconds: 60, completesAt: new Date(Date.now() - 1) } });
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${item.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(409);
+    expect(await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'scout' } } })).toMatchObject({ count: 2 });
+    expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: 'COMPLETE' });
+    expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: before.alloy, heliox: before.heliox });
+  });
+  it('serializes due completion against cancellation into one completion with no refund', async () => {
+    const owner = await player('shipyard-due-race');
+    const before = await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } });
+    const item = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 2, remaining: 2, costAlloy: 2000, costHeliox: 1000, costAether: 0, durationSeconds: 60, completesAt: new Date(Date.now() - 1) } });
+    const [completion, cancellation] = await Promise.all([
+      completeShipyardBatch(prisma, item.id),
+      request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${item.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1'),
+    ]);
+    expect(['completed', 'complete']).toContain(completion);
+    expect(cancellation.status).toBe(409);
+    expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: 'COMPLETE', remaining: 0 });
+    expect(await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'scout' } } })).toMatchObject({ count: 2 });
+    expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: before.alloy, heliox: before.heliox });
   });
 });

@@ -8,3 +8,4 @@ export * from './planetFields';
 export * from './researchCatalogue';
 export * from './researchCompletion';
 export * from './shipyardCatalogue';
+export * from './shipyardCompletion';

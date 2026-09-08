@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { z } from 'zod';
-import { SHIPS, SHIPYARD_BY_ID, SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, ShipKey, evaluateShipyardCatalogue, shipyardDurationForCatalogue } from '@eonrover/shared';
+import { SHIPS, SHIPYARD_BY_ID, SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, ShipKey, completeDueShipyardForPlanet, completeShipyardBatch, evaluateShipyardCatalogue, shipyardDurationForCatalogue } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { shipyardQueue } from '../lib/redis';
 import { requireAuth } from '../middleware/auth';
@@ -30,7 +30,7 @@ function presentQueueItem(item: { id: string; itemKey: string; quantity: number;
 async function scheduleShipyardWakeup(item: { id: string; quantity: number; durationSeconds: number; completesAt: Date }): Promise<boolean> {
   const jobId = shipyardJobId(item.id);
   try {
-    await shipyardQueue.add('complete-shipyard-unit', { queueItemId: item.id, perUnitSeconds: Math.max(1, Math.round(item.durationSeconds / item.quantity)) }, { jobId, delay: Math.max(0, item.completesAt.getTime() - Date.now()), removeOnComplete: true, attempts: 3 });
+    await shipyardQueue.add('complete-shipyard-unit', { queueItemId: item.id }, { jobId, delay: Math.max(0, item.completesAt.getTime() - Date.now()), removeOnComplete: true, attempts: 3 });
     await prisma.shipyardQueueItem.updateMany({ where: { id: item.id, status: 'PENDING' }, data: { jobId } });
     return true;
   } catch { return false; } // PostgreSQL acceptance remains authoritative; Stage 7C will reconcile wake-ups.
@@ -39,6 +39,7 @@ async function scheduleShipyardWakeup(item: { id: string; quantity: number; dura
 router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+  await completeDueShipyardForPlanet(prisma, planet.id);
   const [{ planet: settled }, ships, buildings, research, queue, config] = await Promise.all([
     syncPlanetResources(planet.id), prisma.ship.findMany({ where: { planetId: planet.id } }), prisma.building.findMany({ where: { planetId: planet.id } }), prisma.research.findMany({ where: { userId: req.user!.id } }), prisma.shipyardQueueItem.findMany({ where: { planetId: planet.id }, orderBy: [{ startedAt: 'asc' }, { id: 'asc' }] }), getUniverseConfig(),
   ]);
@@ -54,6 +55,7 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const key = parsed.data.key as ShipKey;
   if (!await assertOwnedPlanet(req.params.planetId, req.user!.id)) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
   const config = await getUniverseConfig(); const startedAt = new Date();
+  await completeDueShipyardForPlanet(prisma, req.params.planetId, startedAt);
   let accepted: Awaited<ReturnType<typeof prisma.shipyardQueueItem.create>> | null = null;
   for (let attempt = 0; attempt < TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
@@ -99,6 +101,8 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
 router.delete<{ planetId: string; queueItemId: string }>('/:queueItemId', asyncHandler(async (req, res) => {
   const initial = await prisma.shipyardQueueItem.findUnique({ where: { id: req.params.queueItemId }, select: { planetId: true } });
   if (!initial || initial.planetId !== req.params.planetId) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Ship construction not found'); return; }
+  const completion = await completeShipyardBatch(prisma, req.params.queueItemId);
+  if (completion !== 'too-early') { sendError(res, 409, ERROR_CODES.CONSTRUCTION_NOT_CANCELLABLE, 'This ship construction can no longer be cancelled.'); return; }
   const config = await getUniverseConfig(); const cancelledAt = new Date();
   let cancelled: { item: Awaited<ReturnType<typeof prisma.shipyardQueueItem.findUniqueOrThrow>>; refund: { alloy: number; heliox: number; aether: number } } | null = null;
   for (let attempt = 0; attempt < TRANSACTION_ATTEMPTS; attempt += 1) {
@@ -112,7 +116,7 @@ router.delete<{ planetId: string; queueItemId: string }>('/:queueItemId', asyncH
         await tx.$queryRaw`SELECT "id" FROM "ShipyardQueueItem" WHERE "id" = ${req.params.queueItemId} FOR UPDATE`;
         const item = await tx.shipyardQueueItem.findUnique({ where: { id: req.params.queueItemId } });
         if (!planet || !item || planet.ownerId !== account.id || item.planetId !== planet.id) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Ship construction not found');
-        if (item.status !== 'PENDING') throw new AppError(409, ERROR_CODES.CONSTRUCTION_NOT_CANCELLABLE, 'This ship construction can no longer be cancelled.');
+        if (item.status !== 'PENDING' || item.completesAt <= new Date()) throw new AppError(409, ERROR_CODES.CONSTRUCTION_NOT_CANCELLABLE, 'This ship construction can no longer be cancelled.');
         const synced = await syncLockedPlanetResources(tx, planet, cancelledAt, config.economySpeed);
         if ((await tx.shipyardQueueItem.updateMany({ where: { id: item.id, status: 'PENDING' }, data: { status: 'CANCELLED' } })).count !== 1) throw new AppError(409, ERROR_CODES.CONSTRUCTION_NOT_CANCELLABLE, 'This ship construction can no longer be cancelled.');
         const refund = { alloy: Math.round(item.costAlloy * 0.5), heliox: Math.round(item.costHeliox * 0.5), aether: Math.round(item.costAether * 0.5) };
