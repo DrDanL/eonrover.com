@@ -306,6 +306,7 @@ export interface ShipyardReadOnlyResponse {
   selectedPlanet: { id: string; name: string; shipyardLevel: number; resources: ResourceAmounts };
   categories: Array<{ id: 'civilian' | 'combat' | 'specialist'; name: string; displayOrder: number }>;
   catalog: Array<{ id: string; key: string; name: string; description: string; category: 'civilian' | 'combat' | 'specialist'; cost: ResourceAmounts; durationSeconds: number; owned: number; statistics: { cargo: number; speed: number; fuelPerDistance: number; attack: number; shield: number; armour: number }; requirements: Array<{ id: string; requiredLevel: number; currentLevel: number; met: boolean; type: 'building' | 'research' }>; meetsRequirements: boolean; missions: readonly string[]; effect: { description: string; status: 'ACTIVE' | 'PARTIAL' | 'PLANNED' } }>;
+  activeQueue: { id: string; shipKey: string; shipName: string; quantity: number; cost: ResourceAmounts; durationSeconds: number; startedAt: string; completesAt: string; status: string; cancellation: { refundPercentage: number; refund: ResourceAmounts } } | null;
   legacyQueue: Array<{ id: string; itemKey: string; itemType: string; quantity: number; remaining: number; startedAt: string; completesAt: string; status: string }>;
 }
 

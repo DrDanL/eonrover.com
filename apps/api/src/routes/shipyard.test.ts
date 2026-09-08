@@ -23,13 +23,13 @@ describe('read-only Shipyard catalogue', () => {
     await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).expect(401);
     await request(app).get(`/api/planets/${other.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(404);
     const response = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
-    expect(Object.keys(response.body).sort()).toEqual(['catalog', 'categories', 'legacyQueue', 'selectedPlanet']);
+    expect(Object.keys(response.body).sort()).toEqual(['activeQueue', 'catalog', 'categories', 'legacyQueue', 'selectedPlanet']);
+    expect(response.body.activeQueue).toEqual(expect.objectContaining({ id: pending.id, shipKey: 'scout', shipName: 'Scout', quantity: 2, status: 'PENDING', cancellation: { refundPercentage: 50, refund: { alloy: 2000, heliox: 1000, aether: 0 } } }));
     expect(response.body.categories.map((item: { id: string }) => item.id)).toEqual(['civilian', 'combat', 'specialist']);
     expect(response.body.catalog.map((item: { id: string }) => item.id)).toEqual(['scout', 'transporter', 'colonyShip', 'corvette', 'frigate', 'probe', 'recycler']);
     expect(response.body.selectedPlanet).toMatchObject({ id: owner.planet.id, shipyardLevel: 2, resources: { alloy: 1234, heliox: 567, aether: 89 } });
     expect(response.body.catalog.find((item: { id: string }) => item.id === 'transporter')).toMatchObject({ owned: 3 });
     expect(response.body.legacyQueue).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: pending.id, status: 'PENDING' }),
       expect.objectContaining({ id: completed.id, status: 'COMPLETE' }),
       expect.objectContaining({ id: cancelled.id, status: 'CANCELLED' }),
     ]));
@@ -39,6 +39,26 @@ describe('read-only Shipyard catalogue', () => {
     expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: cancelled.id } })).toMatchObject({ status: 'CANCELLED' });
     await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ itemKey: 'scout', itemType: 'ship', quantity: 1 }).expect(400);
     expect(await prisma.shipyardQueueItem.count({ where: { planetId: owner.planet.id } })).toBe(3);
+  });
+
+  it('presents an active queue only to its planet, then clears it after completion or cancellation', async () => {
+    const owner = await player('shipyard-active-contract');
+    const otherPlanet = await prisma.planet.create({ data: { ownerId: owner.user.id, name: 'Second Shipyard', galaxy: 9, system: 8, slot: slot++, planetType: 'TEMPERATE', temperature: 10, solarIndex: 0.7, alloy: 0, heliox: 0, aether: 0 } });
+    const item = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 3, remaining: 3, costAlloy: 6000, costHeliox: 3000, costAether: 0, durationSeconds: 900, jobId: 'private-job', completesAt: new Date(Date.now() + 60000) } });
+    const active = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
+    expect(active.body.activeQueue).toEqual(expect.objectContaining({ id: item.id, shipKey: 'scout', shipName: 'Scout', quantity: 3, status: 'PENDING', cost: { alloy: 6000, heliox: 3000, aether: 0 }, durationSeconds: 900 }));
+    expect(JSON.stringify(active.body.activeQueue)).not.toMatch(/jobId|remaining|itemType|planetId|userId|costAlloy|costHeliox|costAether/i);
+    expect((await request(app).get(`/api/planets/${otherPlanet.id}/shipyard`).set('Cookie', owner.cookie).expect(200)).body.activeQueue).toBeNull();
+    await prisma.shipyardQueueItem.update({ where: { id: item.id }, data: { completesAt: new Date(Date.now() - 1) } });
+    const completed = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
+    expect(completed.body.activeQueue).toBeNull();
+    expect(completed.body.catalog.find((ship: { id: string }) => ship.id === 'scout')).toMatchObject({ owned: 3 });
+    const cancellable = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'probe', itemType: 'ship', quantity: 1, remaining: 1, costAlloy: 800, costHeliox: 400, costAether: 0, durationSeconds: 60, completesAt: new Date(Date.now() + 60000) } });
+    const before = await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } });
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${cancellable.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    const cancelled = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
+    expect(cancelled.body.activeQueue).toBeNull();
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: before.alloy + 400, heliox: before.heliox + 200 });
   });
 
   it('starts one canonical batch with snapshots, ignores spoofed values, and cancels with one 50% refund', async () => {
