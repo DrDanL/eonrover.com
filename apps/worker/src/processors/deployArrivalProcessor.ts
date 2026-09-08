@@ -1,11 +1,12 @@
 import { Job } from 'bullmq';
 import {
   completeOwnedPlanetDeployArrival,
+  DEPLOY_ARRIVAL_JOB_NAME,
   DeployArrivalCompletionOutcome,
 } from '@eonrover/shared';
 import { prisma } from '../prisma';
 
-export const DEPLOY_ARRIVAL_JOB_NAME = 'complete-deploy-arrival';
+export { DEPLOY_ARRIVAL_JOB_NAME };
 
 export interface DeployArrivalJobData {
   missionId?: unknown;

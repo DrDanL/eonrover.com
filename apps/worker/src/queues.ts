@@ -7,3 +7,4 @@ export const buildQueue = new Queue('build-queue', { connection });
 export const researchQueue = new Queue('research-queue', { connection });
 export const shipyardQueue = new Queue('shipyard-queue', { connection });
 export const fleetQueue = new Queue('fleet-queue', { connection });
+export const deployArrivalQueue = new Queue('deploy-arrival-queue', { connection });

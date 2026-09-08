@@ -23,6 +23,7 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - Stage 8B2c adds internal-only, serializable DEPLOY arrival completion. It transfers only the persisted canonical manifest to the canonical owned destination, marks the mission complete, and records one notification atomically; early, legacy, malformed, terminal, and ownership-inconsistent rows are no-ops.
 - Stage 8B2d adds an internal-only deterministic deploy-arrival wake-up producer. It reads committed canonical mission state and creates a minimal, deploy-specific BullMQ wake-up without changing PostgreSQL.
 - Stage 8B2e wires that wake-up after the committed deploy launch only, and registers a dedicated deploy-arrival worker that trusts only the mission ID, uses PostgreSQL for due-time and completion state, and safely reschedules early delivery. There is no deploy reconciliation, restart repair, Fleet API, or player control yet.
+- Stage 8B2f adds startup and 30-second non-overlapping reconciliation for canonical outbound DEPLOY rows, bounded to 100. It directly completes overdue rows or restores missing deterministic future wake-ups from PostgreSQL; legacy rows remain untouched and Fleet API/UI remains unavailable.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 
@@ -49,7 +50,7 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Research and technology progression | Partially implemented | A central typed catalogue, atomic account-wide start/cancellation, and durable PostgreSQL-authoritative completion are implemented. Completion locks account → origin planet → queue, applies persisted target/deadline and one notification atomically, and a 100-row startup/30-second reconciler restores deterministic BullMQ jobs. The authenticated catalogue remains read-only and the player interface is deferred to Stage 6D. Economy research has no production-boundary integration yet because no active/partial effect changes lazy production. |
 | Shipyard and fleet construction | Partially implemented | API-only Shipyard batches use persisted snapshots, cancellation and PostgreSQL-authoritative, exactly-once batch completion. The Shipyard worker/API fallback and bounded reconciler use Redis only as a deterministic wake-up. Fleet remains a prototype. |
 | Galaxy and solar-system navigation | Partially implemented | A protected galaxy browser renders 12 slots from live data. Query/mission coordinates have no configured upper bounds, and the screen does not launch context-aware missions. |
-| Fleet missions and travel | Unsafe prototype contained | Legacy Fleet routes return an authenticated unavailable boundary and no worker consumes legacy jobs. Internal-only owned-planet DEPLOY launch dispatches a dedicated deterministic wake-up after commit; its worker reloads PostgreSQL and completes the canonical arrival idempotently. Reconciliation/restart repair and Fleet player access remain unavailable. |
+| Fleet missions and travel | Unsafe prototype contained | Legacy Fleet routes return an authenticated unavailable boundary and no worker consumes legacy jobs. Internal-only owned-planet DEPLOY launch dispatches a dedicated deterministic wake-up after commit; its worker reloads PostgreSQL and completes canonical arrivals idempotently. Startup/30-second reconciliation restores missing wake-ups and completes overdue canonical rows; Fleet player access remains unavailable. |
 | Exploration | Partially implemented | `EXPLORE` is dispatched and has a server-side 20% Gate Fragment outcome. It lacks ship/target constraints, meaningful non-fragment outcomes, reports, and balancing controls. |
 | Colonisation | Partially implemented | A colony ship can found a persisted random planet in an empty coordinate. Maximum planets is ignored, cargo is lost, multi-colony-ship handling is incorrect, and concurrency relies only on the database uniqueness error path. |
 | Espionage | Partially implemented | Server-side reports and technology-based accuracy exist. Any ship can run the mission, reports always contain the full dataset regardless of accuracy, target resources can be stale, and detection is unconditional. |
@@ -112,7 +113,7 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src
-│   │       ├── index.ts          four active workers, three reconcilers, liveness/readiness
+│   │       ├── index.ts          four active workers, four reconcilers, liveness/readiness
 │   │       ├── prisma.ts, redis.ts, queues.ts
 │   │       ├── processors        build, research, shipyard, internal deploy arrival, plus dormant legacy fleet resolution
 │   │       ├── buildingCompletion.ts, buildingReconciler.ts
@@ -423,7 +424,7 @@ Server-calculated, exploit-resistant, and retry-safe are accurate for the checkp
 | `research-queue` | Research route | Upserts account research using job `userId`, completes row, notifies. |
 | `shipyard-queue` | Shipyard route, processor and reconciler | Completes the persisted accepted batch once at its persisted due time, creates one notification, and restores missing deterministic wake-ups. |
 | `fleet-queue` | Legacy prototype only | Queued legacy jobs are preserved but deliberately have no registered worker consumer pending the trusted deploy lifecycle. |
-| `deploy-arrival-queue` | Internal Stage 8B2e launch and dedicated worker | A minimal deterministic wake-up is dispatched after canonical launch commits. The worker reads only its mission ID, uses persisted arrival time for early rescheduling, and calls the PostgreSQL-authoritative completion service. It has no reconciliation or restart repair loop. |
+| `deploy-arrival-queue` | Internal Stage 8B2f launch, worker and reconciler | A deterministic wake-up is dispatched after canonical launch commits. Startup/30-second reconciliation scans up to 100 canonical outbound rows, completes overdue arrivals directly, and restores missing future jobs from persisted arrival time. The worker reads only mission ID and calls the PostgreSQL-authoritative completion service. |
 
 Building creation first commits PostgreSQL state and then best-effort enqueues a deterministic Redis job. The worker scans all pending building rows at startup and every 30 seconds, preserves live jobs, replaces failed/missing jobs, and writes the deterministic ID back. Research, shipyard, and fleet flows do not yet have equivalent reconciliation or an outbox.
 
@@ -447,7 +448,7 @@ Processor-specific hazards:
 | `redis` | Configurable host port, container 6379 | `redis_data`; unauthenticated Redis 7 with periodic RDB snapshots. |
 | `mailpit` | Configurable HTTP/SMTP host ports | `mailpit_data`; image is unpinned `latest`. |
 | `api` | Configurable `PORT` | Waits for infrastructure; container command runs `prisma migrate deploy`, then the development-only optional admin provisioner, then Express; readiness checks PostgreSQL/Redis. |
-| `worker` | Internal configurable health port | Waits for API and infrastructure; starts build, research, Shipyard, and internal deploy-arrival workers plus the existing building/research/Shipyard reconciliation; readiness checks PostgreSQL/Redis. |
+| `worker` | Internal configurable health port | Waits for API and infrastructure; starts build, research, Shipyard, and internal deploy-arrival workers plus building/research/Shipyard/deploy-arrival reconciliation; readiness checks PostgreSQL/Redis. |
 | `web` | Configurable host port, container 3000 | Builds browser API URL into Next bundle and waits for API. |
 
 Expected Docker run path from `README.md` is `cp .env.example .env` followed by `docker compose up --build`. Expected direct-development path is npm install, build shared, apply Prisma migrations, then run API, worker, and web in separate terminals with PostgreSQL, Redis, and Mailpit already available.
