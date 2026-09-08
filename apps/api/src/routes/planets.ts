@@ -23,6 +23,8 @@ import {
   pendingFieldReservationCounts,
   presentPlanetFieldSummary,
 } from '../services/planetFieldService';
+import { completeDueResearchForUser } from '@eonrover/shared';
+import { RESEARCH_BY_ID, ResearchKey } from '@eonrover/shared';
 
 const router = Router();
 
@@ -68,6 +70,7 @@ router.get('/command-summary', asyncHandler(async (req, res) => {
     return;
   }
 
+  await completeDueResearchForUser(prisma, req.user!.id, serverTime);
   await completeDueBuildingConstructionsForPlanet(selectedPlanetId, serverTime);
   const config = await getUniverseConfig();
   const ownerId = req.user!.id;
@@ -121,6 +124,21 @@ router.get('/command-summary', asyncHandler(async (req, res) => {
         completesAt: snapshot.activeConstruction.completesAt,
       }
     : null;
+  const activeResearchRow = await prisma.researchQueueItem.findFirst({
+    where: { userId: req.user!.id, status: 'PENDING' },
+    orderBy: [{ completesAt: 'asc' }, { id: 'asc' }],
+    include: { planet: { select: { id: true, name: true, galaxy: true, system: true, slot: true } } },
+  });
+  const activeResearch = activeResearchRow ? {
+    queueItemId: activeResearchRow.id,
+    id: activeResearchRow.researchKey,
+    name: RESEARCH_BY_ID[activeResearchRow.researchKey as ResearchKey]?.name ?? activeResearchRow.researchKey,
+    targetLevel: activeResearchRow.targetLevel,
+    startedAt: activeResearchRow.startedAt,
+    completesAt: activeResearchRow.completesAt,
+    status: activeResearchRow.status,
+    originatingPlanet: activeResearchRow.planet,
+  } : null;
 
   res.json({
     serverTimestamp: serverTime,
@@ -160,6 +178,7 @@ router.get('/command-summary', asyncHandler(async (req, res) => {
       })),
       energyBlockedBuildingKeys,
     },
+    activeResearch,
     ownedPlanets,
   });
 }));

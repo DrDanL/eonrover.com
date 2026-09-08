@@ -77,6 +77,30 @@ function getSummary(cookie: string, planetId?: string) {
 }
 
 describe('authenticated command summary', () => {
+  it('returns an explicitly allowlisted account-wide active research item for either owned planet', async () => {
+    const { user, cookie } = await createPlayer('summary-research@example.com');
+    const first = await createPlanet(user.id);
+    const second = await createPlanet(user.id);
+    const queue = await prisma.researchQueueItem.create({ data: { userId: user.id, planetId: first.id, researchKey: 'weaponTech', targetLevel: 2, costAlloy: 300, costHeliox: 300, costAether: 40, durationSeconds: 60, startedAt: NOW, completesAt: new Date(NOW.getTime() + 60_000) } });
+    const [fromFirst, fromSecond] = await Promise.all([getSummary(cookie, first.id), getSummary(cookie, second.id)]);
+    for (const response of [fromFirst, fromSecond]) {
+      expect(response.status).toBe(200);
+      expect(response.body.activeResearch).toEqual(expect.objectContaining({ queueItemId: queue.id, id: 'weaponTech', targetLevel: 2, originatingPlanet: expect.objectContaining({ id: first.id, name: first.name }) }));
+      expect(JSON.stringify(response.body.activeResearch)).not.toContain('jobId');
+      expect(JSON.stringify(response.body.activeResearch)).not.toContain('costAlloy');
+    }
+  });
+
+  it('settles overdue research once before returning the command summary', async () => {
+    const { user, cookie } = await createPlayer('summary-research-overdue@example.com');
+    const planet = await createPlanet(user.id);
+    await prisma.researchQueueItem.create({ data: { userId: user.id, planetId: planet.id, researchKey: 'weaponTech', targetLevel: 1, costAlloy: 1, costHeliox: 1, costAether: 1, durationSeconds: 1, startedAt: new Date(NOW.getTime() - 2_000), completesAt: new Date(NOW.getTime() - 1_000) } });
+    await getSummary(cookie, planet.id).expect(200);
+    await getSummary(cookie, planet.id).expect(200);
+    expect(await prisma.research.findUniqueOrThrow({ where: { userId_key: { userId: user.id, key: 'weaponTech' } } })).toMatchObject({ level: 1 });
+    expect(await prisma.notification.count({ where: { userId: user.id, type: 'RESEARCH_COMPLETE' } })).toBe(1);
+  });
+
   it('returns one timestamped, authoritative resource and production snapshot', async () => {
     const { user, cookie } = await createPlayer('summary-owner@example.com');
     const planet = await createPlanet(user.id);
@@ -171,11 +195,13 @@ describe('authenticated command summary', () => {
     const response = await getSummary(cookie, planet.id).expect(200);
 
     expect(Object.keys(response.body).sort()).toEqual([
+      'activeResearch',
       'ownedPlanets',
       'selectedPlanet',
       'selectedPlanetId',
       'serverTimestamp',
     ]);
+    expect(response.body.activeResearch).toBeNull();
     expect(Object.keys(response.body.selectedPlanet).sort()).toEqual([
       'activeConstruction',
       'buildings',

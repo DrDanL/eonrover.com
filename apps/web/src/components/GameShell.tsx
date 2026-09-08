@@ -23,6 +23,7 @@ export default function GameShell({ user, children }: { user: CurrentUser; child
   const selected = summary?.selectedPlanet ?? null;
   const selectedPlanetId = summary?.selectedPlanetId ?? null;
   const construction = selected?.activeConstruction ?? null;
+  const research = summary?.activeResearch ?? null;
   const fieldUsagePercentage = selected
     ? Math.min(100, Math.max(0, (selected.fields.occupied / selected.fields.capacity) * 100))
     : 0;
@@ -148,6 +149,7 @@ export default function GameShell({ user, children }: { user: CurrentUser; child
             <Link href={`/game/planets/${selectedPlanetId}/buildings`}>Review buildings</Link>
           </div>
         ) : null}
+        {research && selectedPlanetId ? <div className="global-construction" role="status"><div><strong>{research.name} → level {research.targetLevel}</strong><span>{formatRelativeCountdown(research.completesAt, now)} remaining · account-wide research</span></div><Link href={`/game/planets/${selectedPlanetId}/research`}>View research</Link></div> : null}
         {refreshing ? <p className="command-refreshing" role="status">Refreshing authoritative telemetry…</p> : null}
         {stale && error ? (
           <div className="command-stale alert alert-error" role="alert">

@@ -48,6 +48,7 @@ router.get('/', asyncHandler(async (req, res) => {
       where: { planet: { ownerId: req.user!.id }, status: 'PENDING' },
       orderBy: { startedAt: 'asc' },
       take: 1,
+      include: { planet: { select: { id: true, name: true, galaxy: true, system: true, slot: true } } },
     }),
   ]);
   const accountResearchLevels = Object.fromEntries(
@@ -57,6 +58,7 @@ router.get('/', asyncHandler(async (req, res) => {
   );
   const planetBuildingLevels = Object.fromEntries(buildings.map((building) => [building.key, building.level]));
   const resources = { alloy: planet.alloy, heliox: planet.heliox, aether: planet.aether };
+  const active = pending[0];
   const catalog = RESEARCH_CATALOGUE.map((entry) => {
     const evaluation = evaluateResearchEntry({
       id: entry.id,
@@ -89,10 +91,17 @@ router.get('/', asyncHandler(async (req, res) => {
       meetsRequirements: evaluation.meetsRequirements,
       affordable,
       effect: entry.effect,
-      scheduling: { available: false, reason: 'Research scheduling is currently unavailable.' },
+      scheduling: active
+        ? { available: false, reason: 'Another account-wide research item is active.' }
+        : entry.effect.status === 'PLANNED'
+          ? { available: false, reason: 'Effect not yet available. This technology cannot currently be scheduled.' }
+          : !evaluation.meetsRequirements
+            ? { available: false, reason: 'Research requirements are not met.' }
+            : !affordable
+              ? { available: false, reason: 'Insufficient resources on the selected planet.' }
+              : { available: true, reason: 'Available to research.' },
     };
   });
-  const active = pending[0];
   res.json({
     generatedAt: new Date().toISOString(),
     selectedPlanet: {
@@ -106,12 +115,16 @@ router.get('/', asyncHandler(async (req, res) => {
     catalog,
     activeResearch: active
       ? {
+          queueItemId: active.id,
           id: active.researchKey,
           name: RESEARCH_BY_ID[active.researchKey as ResearchKey]?.name ?? active.researchKey,
           targetLevel: active.targetLevel,
           startedAt: active.startedAt,
           completesAt: active.completesAt,
           status: active.status,
+          originatingPlanet: active.planet,
+          cost: { alloy: active.costAlloy, heliox: active.costHeliox, aether: active.costAether },
+          cancellation: { refundPercentage: 50, refund: { alloy: Math.round(active.costAlloy * 0.5), heliox: Math.round(active.costHeliox * 0.5), aether: Math.round(active.costAether * 0.5) } },
         }
       : null,
   });

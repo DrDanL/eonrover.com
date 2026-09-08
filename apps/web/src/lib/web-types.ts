@@ -228,7 +228,19 @@ export interface CommandSummaryResponse {
   serverTimestamp: string;
   selectedPlanetId: string | null;
   selectedPlanet: CommandPlanetSummary | null;
+  activeResearch: ActiveResearchSummary | null;
   ownedPlanets: OwnedPlanetOption[];
+}
+
+export interface ActiveResearchSummary {
+  queueItemId: string;
+  id: string;
+  name: string;
+  targetLevel: number;
+  startedAt: string;
+  completesAt: string;
+  status: string;
+  originatingPlanet: { id: string; name: string; galaxy: number; system: number; slot: number };
 }
 
 export interface PresentedBuildQueueItem {
@@ -263,7 +275,7 @@ export interface ResearchCatalogItem {
   meetsRequirements: boolean;
   affordable: boolean;
   effect: { description: string; status: 'ACTIVE' | 'PARTIAL' | 'PLANNED' };
-  scheduling: { available: false; reason: string };
+  scheduling: { available: boolean; reason: string };
 }
 
 export interface ResearchCatalogueResponse {
@@ -272,7 +284,7 @@ export interface ResearchCatalogueResponse {
   accountResearchLevels: Record<string, number>;
   categories: Array<{ id: string; name: string; displayOrder: number }>;
   catalog: ResearchCatalogItem[];
-  activeResearch: { id: string; name: string; targetLevel: number; startedAt: string; completesAt: string; status: string } | null;
+  activeResearch: (ActiveResearchSummary & { cost: ResourceAmounts; cancellation: { refundPercentage: number; refund: ResourceAmounts } }) | null;
 }
 
 export interface ShipyardCatalogItem {
