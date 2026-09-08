@@ -74,6 +74,50 @@ async function occupyCoordinate(coordinate: registrationCoordinates.HomeworldCoo
   });
 }
 
+async function reserveCanonicalColonizationTarget(coordinate: registrationCoordinates.HomeworldCoordinate): Promise<void> {
+  const owner = await prisma.user.create({
+    data: {
+      email: `colonizer-${coordinate.galaxy}-${coordinate.system}-${coordinate.slot}@example.com`,
+      username: `colonizer_${coordinate.galaxy}_${coordinate.system}_${coordinate.slot}`,
+      passwordHash: 'not-used',
+      status: 'ACTIVE',
+    },
+  });
+  const origin = await prisma.planet.create({
+    data: {
+      ownerId: owner.id,
+      name: 'Colonizer origin',
+      galaxy: coordinate.galaxy,
+      system: coordinate.system,
+      slot: coordinate.slot === 1 ? 2 : 1,
+      planetType: 'TEMPERATE',
+      temperature: 10,
+      solarIndex: 0.7,
+    },
+  });
+  await prisma.fleetMission.create({
+    data: {
+      originId: origin.id,
+      targetGalaxy: coordinate.galaxy,
+      targetSystem: coordinate.system,
+      targetSlot: coordinate.slot,
+      missionType: 'COLONIZE',
+      ships: { colonyShip: 1 },
+      cargo: { alloy: 0, heliox: 0, aether: 0 },
+      arrivesAt: new Date('2026-12-01T00:00:00.000Z'),
+      colonizationAccountId: owner.id,
+      colonizationTargetGalaxy: coordinate.galaxy,
+      colonizationTargetSystem: coordinate.system,
+      colonizationTargetSlot: coordinate.slot,
+      colonizationShips: { colonyShip: 1 },
+      colonizationFuelHeliox: 10,
+      colonizationDurationSeconds: 60,
+      colonizationCharacteristics: { planetType: 'TEMPERATE', temperature: 10, solarIndex: 0.7, fieldCapacity: 180 },
+      colonizationStarterState: { resources: { alloy: 500, heliox: 300, aether: 0 }, buildings: { solarArray: 1, alloyMine: 0, helioxExtractor: 0 } },
+    },
+  });
+}
+
 beforeEach(() => {
   mockedSendMail.mockReset();
   mockedSendMail.mockResolvedValue(undefined);
@@ -220,6 +264,63 @@ describe('atomic registration provisioning', () => {
       await prisma.planet.findUnique({ where: { galaxy_system_slot: available } }),
     ).toMatchObject({ ownerId: user.id, isHomeworld: true });
     expect(await prisma.verificationToken.count({ where: { userId: user.id } })).toBe(1);
+  });
+
+  it('skips an active canonical colonisation reservation during homeworld allocation', async () => {
+    const reserved = { galaxy: 3, system: 9, slot: 4 };
+    const available = { galaxy: 3, system: 9, slot: 5 };
+    await reserveCanonicalColonizationTarget(reserved);
+    const coordinateSpy = jest
+      .spyOn(registrationCoordinates, 'generateHomeworldCoordinate')
+      .mockReturnValueOnce(reserved)
+      .mockReturnValueOnce(available);
+
+    await register('reserved-slot@example.com', 'reserved_slot').expect(201);
+
+    expect(coordinateSpy).toHaveBeenCalledTimes(2);
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: 'reserved-slot@example.com' } });
+    expect(await prisma.planet.findUnique({ where: { galaxy_system_slot: available } })).toMatchObject({ ownerId: user.id });
+    expect(await prisma.planet.findUnique({ where: { galaxy_system_slot: reserved } })).toBeNull();
+  });
+
+  it('serializes concurrent coordinate claims and allocates one valid alternative rather than colliding', async () => {
+    const contested = { galaxy: 4, system: 10, slot: 6 };
+    const firstAlternative = { galaxy: 4, system: 10, slot: 7 };
+    const secondAlternative = { galaxy: 4, system: 10, slot: 8 };
+    let firstCalls = 0;
+    let secondCalls = 0;
+    const firstGenerator = () => (firstCalls++ === 0 ? contested : firstAlternative);
+    const secondGenerator = () => (secondCalls++ === 0 ? contested : secondAlternative);
+
+    const [first, second] = await Promise.all([
+      provisionRegistration(provisioningInput({
+        email: 'coordinate-race-one@example.com',
+        username: 'coordinate_race_one',
+        verificationToken: 'coordinate-race-one-token',
+      }), { coordinateGenerator: firstGenerator }),
+      provisionRegistration(provisioningInput({
+        email: 'coordinate-race-two@example.com',
+        username: 'coordinate_race_two',
+        verificationToken: 'coordinate-race-two-token',
+      }), { coordinateGenerator: secondGenerator }),
+    ]);
+
+    expect(new Set([first.homeworldId, second.homeworldId]).size).toBe(2);
+    const claimed = await prisma.planet.findMany({
+      where: { ownerId: { in: [first.user.id, second.user.id] } },
+      select: { galaxy: true, system: true, slot: true },
+    });
+    expect(claimed).toHaveLength(2);
+    expect(new Set(claimed.map(({ galaxy, system, slot }) => `${galaxy}:${system}:${slot}`)).size).toBe(2);
+    expect(claimed).toEqual(expect.arrayContaining([expect.objectContaining(contested)]));
+    expect(claimed.some((coordinate) => (
+      (coordinate.galaxy === firstAlternative.galaxy
+        && coordinate.system === firstAlternative.system
+        && coordinate.slot === firstAlternative.slot)
+      || (coordinate.galaxy === secondAlternative.galaxy
+        && coordinate.system === secondAlternative.system
+        && coordinate.slot === secondAlternative.slot)
+    ))).toBe(true);
   });
 
   it('returns a safe temporary error and no partial account when coordinate retries are exhausted', async () => {

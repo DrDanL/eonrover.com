@@ -6,6 +6,7 @@ import {
   EMAIL_VERIFICATION_TTL_MS,
   emailVerificationTokenStorageValue,
 } from './emailVerificationService';
+import { lockCoordinateForTransaction } from './coordinateLockService';
 import { generateHomeworldCoordinate, HomeworldCoordinate } from './registrationCoordinates';
 
 export const HOMEWORLD_ALLOCATION_ATTEMPTS = 10;
@@ -68,6 +69,13 @@ export interface ProvisionedRegistration {
   verificationToken: string;
 }
 
+class CoordinateUnavailableError extends Error {
+  constructor() {
+    super('Homeworld coordinate is unavailable.');
+    this.name = 'CoordinateUnavailableError';
+  }
+}
+
 function randomInRange([min, max]: [number, number]): number {
   return Math.round(min + Math.random() * (max - min));
 }
@@ -127,6 +135,29 @@ export async function provisionRegistration(
           throw new AppError(409, ERROR_CODES.CONFLICT, 'Email or username already in use');
         }
 
+        // This lock is shared with future canonical colonisation reservations.
+        // Exact planet/reservation checks under it, not the advisory hash alone,
+        // decide whether this coordinate can be claimed.
+        await lockCoordinateForTransaction(tx, coordinate);
+        const existingPlanet = await tx.planet.findUnique({
+          where: { galaxy_system_slot: coordinate },
+          select: { id: true },
+        });
+        if (existingPlanet) throw new CoordinateUnavailableError();
+
+        const activeReservation = await tx.fleetMission.findFirst({
+          where: {
+            missionType: 'COLONIZE',
+            status: 'OUTBOUND',
+            colonizationAccountId: { not: null },
+            colonizationTargetGalaxy: coordinate.galaxy,
+            colonizationTargetSystem: coordinate.system,
+            colonizationTargetSlot: coordinate.slot,
+          },
+          select: { id: true },
+        });
+        if (activeReservation) throw new CoordinateUnavailableError();
+
         const user = await operations.createUser(tx, {
           email: input.email,
           username: input.username,
@@ -167,7 +198,7 @@ export async function provisionRegistration(
         };
       });
     } catch (error) {
-      if (isCoordinateConflict(error)) {
+      if (error instanceof CoordinateUnavailableError || isCoordinateConflict(error)) {
         if (attempt + 1 < maxAttempts) continue;
         throw new AppError(
           503,

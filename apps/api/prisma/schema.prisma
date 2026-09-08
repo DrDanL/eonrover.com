@@ -48,6 +48,7 @@ model User {
   securityEvents    SecurityEvent[]
   gateFragments     GateFragment[]
   researchQueue     ResearchQueueItem[]
+  colonizationMissions FleetMission[] @relation("ColonizationAccount")
 
   @@index([status])
 }
@@ -123,6 +124,7 @@ model Planet {
   fleetsTarget     FleetMission[] @relation("TargetPlanet")
   deploysOrigin    FleetMission[] @relation("DeployOriginPlanet")
   deploysDestination FleetMission[] @relation("DeployDestinationPlanet")
+  createdByColonization FleetMission? @relation("ColonizationCreatedPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
   gate             EonGate?
@@ -282,11 +284,27 @@ model FleetMission {
   deployShips Json?
   deployFuelHeliox Int?
   deployDurationSeconds Int?
+  // Stage 9B canonical colonisation fields. Existing generic COLONIZE rows
+  // remain legacy data unless all future lifecycle code explicitly supplies
+  // these snapshots.
+  colonizationAccountId String?
+  colonizationAccount User? @relation("ColonizationAccount", fields: [colonizationAccountId], references: [id], onDelete: SetNull)
+  colonizationTargetGalaxy Int?
+  colonizationTargetSystem Int?
+  colonizationTargetSlot Int?
+  colonizationShips Json?
+  colonizationFuelHeliox Int?
+  colonizationDurationSeconds Int?
+  colonizationCharacteristics Json?
+  colonizationStarterState Json?
+  createdPlanetId String? @unique
+  createdPlanet Planet? @relation("ColonizationCreatedPlanet", fields: [createdPlanetId], references: [id], onDelete: SetNull)
 
   @@index([originId])
   @@index([status])
   @@index([deployOriginId])
   @@index([deployDestinationId])
+  @@index([colonizationAccountId])
 }
 
 model CombatReport {
