@@ -17,6 +17,9 @@ export const fleetQueue = new Queue('fleet-queue', { connection });
 // Kept separate from the dormant legacy fleet queue so canonical deploy
 // wake-ups can reach only the dedicated trusted processor.
 export const deployArrivalQueue = new Queue('deploy-arrival-queue', { connection });
+// Canonical colonisation wake-ups remain isolated from both the trusted deploy
+// queue and the deliberately dormant legacy fleet queue.
+export const colonizationArrivalQueue = new Queue('colonization-arrival-queue', { connection });
 
 export const QUEUE_NAMES = {
   build: 'build-queue',
@@ -24,4 +27,5 @@ export const QUEUE_NAMES = {
   shipyard: 'shipyard-queue',
   fleet: 'fleet-queue',
   deployArrival: 'deploy-arrival-queue',
+  colonizationArrival: 'colonization-arrival-queue',
 } as const;

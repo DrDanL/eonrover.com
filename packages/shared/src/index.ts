@@ -13,3 +13,4 @@ export * from './deployMission';
 export * from './deployArrivalCompletion';
 export * from './deployArrivalScheduling';
 export * from './colonizationMission';
+export * from './colonizationArrivalScheduling';

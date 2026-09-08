@@ -3,13 +3,14 @@ import {
   deriveColonyCharacteristics,
   planSameSystemColonization,
 } from '@eonrover/shared';
-import { connection } from '../lib/redis';
+import { colonizationArrivalQueue } from '../lib/redis';
 import { prisma } from '../lib/prisma';
 import { invalidateUniverseConfigCache, setUniverseConfigValue } from './gameConfig';
 import {
   ColonizationLaunchInput,
   launchCanonicalColonization,
 } from './colonizationLaunchService';
+import { colonizationArrivalJobId } from './colonizationArrivalSchedulingService';
 
 let nextSystem = 100;
 
@@ -129,8 +130,6 @@ describe('launchCanonicalColonization', () => {
       ships: { colonyShip: 1 },
       fleetSpeed: 1,
     });
-    const keysBefore = (await connection.keys('*')).sort();
-
     const accepted = await launchCanonicalColonization(input(candidate));
 
     const [mission, originAfter, ships] = await Promise.all([
@@ -138,7 +137,7 @@ describe('launchCanonicalColonization', () => {
       prisma.planet.findUniqueOrThrow({ where: { id: candidate.origin.id } }),
       prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: candidate.origin.id, key: 'colonyShip' } } }),
     ]);
-    expect(Object.keys(accepted).sort()).toEqual(['arrivesAt', 'departedAt', 'durationSeconds', 'fuelHeliox', 'missionId', 'originPlanetId', 'status', 'target']);
+    expect(Object.keys(accepted).sort()).toEqual(['arrivesAt', 'departedAt', 'durationSeconds', 'fuelHeliox', 'missionId', 'originPlanetId', 'schedulingOutcome', 'status', 'target']);
     expect(accepted).toMatchObject({
       originPlanetId: candidate.origin.id,
       target: plan.target,
@@ -176,7 +175,11 @@ describe('launchCanonicalColonization', () => {
     expect(await prisma.notification.count()).toBe(0);
     expect(await prisma.combatReport.count()).toBe(0);
     expect(await prisma.espionageReport.count()).toBe(0);
-    expect((await connection.keys('*')).sort()).toEqual(keysBefore);
+    expect(accepted.schedulingOutcome).toBe('scheduled');
+    const wakeup = await colonizationArrivalQueue.getJob(colonizationArrivalJobId(accepted.missionId));
+    expect(wakeup).toBeDefined();
+    await wakeup?.remove();
+    expect(await colonizationArrivalQueue.getJob(colonizationArrivalJobId(accepted.missionId))).toBeUndefined();
   });
 
   it('rejects client-like spoofed fields and invalid targets without reserving ships or Heliox', async () => {

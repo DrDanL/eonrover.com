@@ -10,6 +10,10 @@ import { prisma } from '../lib/prisma';
 import { lockCoordinateForTransaction } from './coordinateLockService';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
+import {
+  ColonizationArrivalSchedulingOutcome,
+  scheduleColonizationArrivalWakeup,
+} from './colonizationArrivalSchedulingService';
 
 const SERIALIZABLE_TRANSACTION_ATTEMPTS = 3;
 
@@ -48,6 +52,8 @@ export interface AcceptedColonizationLaunch {
   departedAt: Date;
   arrivesAt: Date;
   status: 'OUTBOUND';
+  /** Best-effort internal Redis wake-up result; PostgreSQL acceptance is final. */
+  schedulingOutcome: ColonizationArrivalSchedulingOutcome;
 }
 
 function isRetryableTransactionError(error: unknown): boolean {
@@ -107,7 +113,7 @@ export async function launchCanonicalColonization(
 
   for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const accepted = await prisma.$transaction(async (tx) => {
         // Canonical lock order: account → origin planet → origin Colony Ship
         // inventory → target coordinate advisory lock → FleetMission rows.
         await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.accountId} FOR UPDATE`;
@@ -265,9 +271,16 @@ export async function launchCanonicalColonization(
           durationSeconds: plan.durationSeconds,
           departedAt,
           arrivesAt,
-          status: 'OUTBOUND',
+          status: 'OUTBOUND' as const,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // The canonical mission, reserved Colony Ship, and accepted Heliox are
+      // committed before touching Redis. A failed wake-up is recoverable by a
+      // later stage and never alters the accepted PostgreSQL reservation.
+      return {
+        ...accepted,
+        schedulingOutcome: await scheduleColonizationArrivalWakeup(accepted.missionId),
+      };
     } catch (error) {
       if (error instanceof ColonizationLaunchError) throw error;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
