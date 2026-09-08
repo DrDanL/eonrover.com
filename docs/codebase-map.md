@@ -19,6 +19,7 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - Stage 7D1 enables Shipyard player controls for accepted batches (quantity 1–100, one pending batch per planet, persisted timing/refund presentation and cancellation). PostgreSQL remains authoritative; BullMQ only wakes completion. Browser visual smoke verification is deferred.
 - Stage 8B1 prepares only persistence and pure validation for a future owned-planet DEPLOY lifecycle; no Fleet route, worker, or player control is enabled.
 - Stage 8B2a deliberately disables unsafe legacy Fleet API routes and worker job consumption; queued legacy jobs and database rows are preserved pending the trusted deploy lifecycle.
+- Stage 8B2b adds an internal-only, serializable owned-planet DEPLOY launch transaction. PostgreSQL synchronises and reserves only the origin's ships and Heliox before it stores canonical server-derived snapshots; no API, worker wake-up, completion, reconciliation, or player control is enabled yet.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 
@@ -45,7 +46,7 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Research and technology progression | Partially implemented | A central typed catalogue, atomic account-wide start/cancellation, and durable PostgreSQL-authoritative completion are implemented. Completion locks account → origin planet → queue, applies persisted target/deadline and one notification atomically, and a 100-row startup/30-second reconciler restores deterministic BullMQ jobs. The authenticated catalogue remains read-only and the player interface is deferred to Stage 6D. Economy research has no production-boundary integration yet because no active/partial effect changes lazy production. |
 | Shipyard and fleet construction | Partially implemented | API-only Shipyard batches use persisted snapshots, cancellation and PostgreSQL-authoritative, exactly-once batch completion. The Shipyard worker/API fallback and bounded reconciler use Redis only as a deterministic wake-up. Fleet remains a prototype. |
 | Galaxy and solar-system navigation | Partially implemented | A protected galaxy browser renders 12 slots from live data. Query/mission coordinates have no configured upper bounds, and the screen does not launch context-aware missions. |
-| Fleet missions and travel | Partially implemented | Dispatch, fuel, cargo, travel duration, recall, arrival, return, and gate travel are connected. Mission-specific rules, concurrency, recall races, idempotency, and recovery are incomplete. |
+| Fleet missions and travel | Unsafe prototype contained | Legacy Fleet routes return an authenticated unavailable boundary and no worker consumes legacy jobs. An internal-only owned-planet DEPLOY launch transaction now reserves canonical assets, but completion/recovery is not implemented and Fleet remains unavailable to players. |
 | Exploration | Partially implemented | `EXPLORE` is dispatched and has a server-side 20% Gate Fragment outcome. It lacks ship/target constraints, meaningful non-fragment outcomes, reports, and balancing controls. |
 | Colonisation | Partially implemented | A colony ship can found a persisted random planet in an empty coordinate. Maximum planets is ignored, cargo is lost, multi-colony-ship handling is incorrect, and concurrency relies only on the database uniqueness error path. |
 | Espionage | Partially implemented | Server-side reports and technology-based accuracy exist. Any ship can run the mission, reports always contain the full dataset regardless of accuracy, target resources can be stale, and detection is unconditional. |
@@ -99,7 +100,7 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │   │       ├── lib               auth, mail, Prisma, Redis/BullMQ clients
 │   │       ├── middleware        session/RBAC/CSRF checks
 │   │       ├── routes            auth, game, social, public, and admin REST routes
-│   │       ├── services          config, provisioning, production, completion, admin state
+│   │       ├── services          config, provisioning, production, completion, internal deploy launch, admin state
 │   │       ├── *.test.ts         route integration tests
 │   │       └── testSetup.ts      guarded cleanup for isolated DB-backed tests
 │   ├── worker
@@ -108,9 +109,9 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src
-│   │       ├── index.ts          four workers, building reconciler, liveness/readiness
+│   │       ├── index.ts          three active workers, reconcilers, liveness/readiness
 │   │       ├── prisma.ts, redis.ts, queues.ts
-│   │       ├── processors        build, research, shipyard, and fleet resolution
+│   │       ├── processors        build, research, shipyard, plus dormant legacy fleet resolution
 │   │       ├── buildingCompletion.ts, buildingReconciler.ts
 │   │       ├── *.test.ts         processor/completion/reconciliation tests
 │   │       └── testSetup.ts      same isolated-database guard as API tests
@@ -214,7 +215,7 @@ All are beneath the client-guarded layout in `apps/web/src/app/(game)/game/layou
 | `/game/planets/[planetId]/buildings` | Field and energy summaries, categorised authoritative building catalog, eligibility reasons, single active construction/refund details, auto-refresh at completion, enqueue and cancel. |
 | `/game/planets/[planetId]/research` | Read-only account-wide research catalogue using the selected owned planet for its laboratory and resource context; scheduling is unavailable. |
 | `/game/planets/[planetId]/shipyard` | Ship/defence catalog and batch enqueue. |
-| `/game/planets/[planetId]/fleet` | Generic form for every mission, all account missions, and recall. |
+| `/game/planets/[planetId]/fleet` | Dormant legacy prototype page; its Fleet API is deliberately unavailable and navigation remains labelled `Coming later`. |
 | `/game/galaxy` | Live 12-slot system browser. |
 | `/game/gates` | Fragments, gate activation, gate linking. |
 | `/game/alliances` | Directory, membership, create, join, leave. |
@@ -269,9 +270,9 @@ All mutating requests pass the global custom-header check in `requireCsrfHeader`
 | `POST /api/research` | Player owning funding planet | Connected; checks one active research, requirements/resources, deducts, records, schedules. |
 | `GET /api/planets/:planetId/shipyard` | Owning player | Connected; catalog, counts, pending batches. |
 | `POST /api/planets/:planetId/shipyard` | Owning player | Connected; requirements/resources, batch record, first-unit job. Multiple batches are unintentionally parallel. |
-| `GET /api/fleet` | Player | Connected; last 50 missions whose origin belongs to player, including completed missions. |
-| `POST /api/fleet` | Owning origin player | Connected; validates generic shape/ownership/counts, calculates server duration/fuel, deducts, records, schedules. Mission-specific policy is incomplete. |
-| `POST /api/fleet/:id/recall` | Origin owner | Connected; removes arrival job if possible and schedules return. Has an arrival race. |
+| `GET /api/fleet` | Authenticated player | Deliberately unavailable: returns `503 FLEET_MISSIONS_UNAVAILABLE` without reading or exposing mission data. |
+| `POST /api/fleet` | Authenticated player | Deliberately unavailable: returns `503 FLEET_MISSIONS_UNAVAILABLE` without mutating mission, inventory, resources, or jobs. |
+| `POST /api/fleet/:id/recall` | Authenticated player | Deliberately unavailable: returns `503 FLEET_MISSIONS_UNAVAILABLE` without mutating mission, inventory, resources, or jobs. |
 | `GET /api/gates` | Player | Connected; owned fragments and gates. |
 | `POST /api/gates/activate` | Owning player | Connected; prerequisites, consumes first three account fragments, creates visible gate. |
 | `POST /api/gates/link` | Owner of both planets | Connected; symmetrically links two gates and clears prior partners. |
@@ -418,7 +419,7 @@ Server-calculated, exploit-resistant, and retry-safe are accurate for the checkp
 | `build-queue` | Building route and reconciler | Uses persisted timing/state to atomically complete exactly once, settle split production, update the level, and notify. |
 | `research-queue` | Research route | Upserts account research using job `userId`, completes row, notifies. |
 | `shipyard-queue` | Shipyard route, processor and reconciler | Completes the persisted accepted batch once at its persisted due time, creates one notification, and restores missing deterministic wake-ups. |
-| `fleet-queue` | Fleet route and processor | Resolves arrival/mission effect, schedules return, or restores ships/cargo at origin. |
+| `fleet-queue` | Legacy prototype only | Queued legacy jobs are preserved but deliberately have no registered worker consumer pending the trusted deploy lifecycle. |
 
 Building creation first commits PostgreSQL state and then best-effort enqueues a deterministic Redis job. The worker scans all pending building rows at startup and every 30 seconds, preserves live jobs, replaces failed/missing jobs, and writes the deterministic ID back. Research, shipyard, and fleet flows do not yet have equivalent reconciliation or an outbox.
 
@@ -428,7 +429,7 @@ Processor-specific hazards:
 
 - Building completion locks planet then construction, conditionally claims `PENDING`, and commits production, level, status, and one notification together. Research retains the earlier non-claiming behavior.
 - Shipyard commits the unit increment before scheduling/updating the next unit. A failure in between causes a retry to add the same unit again.
-- Fleet arrival applies effects before `scheduleReturn` changes status. Return jobs are processed by job name even if the mission is already `COMPLETE`; a retry can restore ships/cargo again (`fleetProcessor.ts:394-403`).
+- Legacy fleet arrival/return code retains its original unsafe behavior but is deliberately dormant: no worker registers a `fleet-queue` consumer until the trusted deploy lifecycle has safe completion and recovery.
 - Admin job deletion removes only Redis state (`admin.ts:170`), with no queue-record transition or refund.
 - Worker `/healthz` is liveness-only; `/readyz` independently checks PostgreSQL and Redis and is used by Compose.
 
