@@ -9,7 +9,6 @@ const { createHealthHandler } = require('./health') as typeof import('./health')
 const { processBuildJob } = require('./processors/buildProcessor') as typeof import('./processors/buildProcessor');
 const { processResearchJob } = require('./processors/researchProcessor') as typeof import('./processors/researchProcessor');
 const { processShipyardJob } = require('./processors/shipyardProcessor') as typeof import('./processors/shipyardProcessor');
-const { processFleetJob } = require('./processors/fleetProcessor') as typeof import('./processors/fleetProcessor');
 const {
   reconcilePendingBuildingJobs,
   startBuildingReconciliation,
@@ -44,20 +43,18 @@ const researchWorker = new Worker('research-queue', processResearchJob, { connec
 const researchReconciliationQueue = new Queue('research-queue', { connection });
 const shipyardWorker = new Worker('shipyard-queue', processShipyardJob, { connection });
 const shipyardReconciliationQueue = new Queue('shipyard-queue', { connection });
-const fleetWorker = new Worker('fleet-queue', processFleetJob, { connection });
 
 for (const [name, worker] of [
   ['build-queue', buildWorker],
   ['research-queue', researchWorker],
   ['shipyard-queue', shipyardWorker],
-  ['fleet-queue', fleetWorker],
 ] as const) {
   worker.on('completed', logCompletion(name));
   worker.on('failed', logFailure(name));
 }
 
 // eslint-disable-next-line no-console
-console.log('Eon Rover worker started, listening for build/research/shipyard/fleet events.');
+console.log('Eon Rover worker started, listening for build/research/shipyard events. Legacy fleet jobs are intentionally not consumed.');
 
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
@@ -137,7 +134,6 @@ async function shutdown() {
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),
-    fleetWorker.close(),
   ]);
   process.exit(0);
 }

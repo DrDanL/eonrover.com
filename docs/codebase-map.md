@@ -18,6 +18,7 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - Stage 7C makes Shipyard completion PostgreSQL-authoritative and idempotent: overdue API fallback and a bounded startup/30-second reconciler repair missing deterministic BullMQ wake-ups; player controls remain deferred.
 - Stage 7D1 enables Shipyard player controls for accepted batches (quantity 1–100, one pending batch per planet, persisted timing/refund presentation and cancellation). PostgreSQL remains authoritative; BullMQ only wakes completion. Browser visual smoke verification is deferred.
 - Stage 8B1 prepares only persistence and pure validation for a future owned-planet DEPLOY lifecycle; no Fleet route, worker, or player control is enabled.
+- Stage 8B2a deliberately disables unsafe legacy Fleet API routes and worker job consumption; queued legacy jobs and database rows are preserved pending the trusted deploy lifecycle.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 
