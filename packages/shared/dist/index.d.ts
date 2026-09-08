@@ -6,3 +6,4 @@ export * from './buildingPrerequisites';
 export * from './gamePresentation';
 export * from './planetFields';
 export * from './researchCatalogue';
+export * from './researchCompletion';

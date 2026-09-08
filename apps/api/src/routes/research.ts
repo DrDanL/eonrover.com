@@ -18,6 +18,7 @@ import { researchQueue } from '../lib/redis';
 import { getUniverseConfig } from '../services/gameConfig';
 import { AppError, asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 import { Prisma } from '@prisma/client';
+import { completeDueResearchForUser } from '@eonrover/shared';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
@@ -35,6 +36,7 @@ router.get('/', asyncHandler(async (req, res) => {
     sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
+  await completeDueResearchForUser(prisma, req.user!.id);
 
   // This is a presentation read: it may settle overdue building work and the
   // selected planet's timestamp-based resources, but never changes research.
@@ -118,6 +120,11 @@ router.get('/', asyncHandler(async (req, res) => {
 const enqueueSchema = z.object({ key: z.string(), planetId: z.string() });
 const START_TRANSACTION_ATTEMPTS = 3;
 
+function isSerializationFailure(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError
+    && (error.code === 'P2034' || (error.code === 'P2010' && error.meta?.code === '40001'));
+}
+
 function presentRequirements(key: ResearchKey, research: Record<string, number>, buildings: Record<string, number>) {
   return RESEARCH_BY_ID[key].requirements.map((requirement) => {
     const currentLevel = requirement.kind === 'building' ? (buildings[requirement.id] ?? 0) : (research[requirement.id] ?? 0);
@@ -153,6 +160,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const key = parsed.data.key as ResearchKey;
   const config = await getUniverseConfig();
   const startedAt = new Date();
+  await completeDueResearchForUser(prisma, req.user!.id, startedAt);
   let accepted: Awaited<ReturnType<typeof prisma.researchQueueItem.create>> | null = null;
   for (let attempt = 0; attempt < START_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
@@ -185,7 +193,7 @@ router.post('/', asyncHandler(async (req, res) => {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       break;
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034' && attempt + 1 < START_TRANSACTION_ATTEMPTS) continue;
+      if (isSerializationFailure(error) && attempt + 1 < START_TRANSACTION_ATTEMPTS) continue;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new AppError(409, ERROR_CODES.RESEARCH_IN_PROGRESS, 'Another research item is already active.');
       }

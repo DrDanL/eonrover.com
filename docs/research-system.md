@@ -32,10 +32,9 @@ each resource component. Duration is `max(round(((alloy + heliox + 2×aether) /
 treated as zero and invalid/non-positive speeds use the existing 0.01 minimum,
 so presentation cannot emit non-finite values.
 
-The older queue mutation still has its original prototype behaviour: it
-performs read/check/decrement work without the trusted building flow's locking,
-snapshotting, durable claim, or reconciliation. It is intentionally not offered
-by the Stage 6A UI.
+The player interface remains read-only and labelled “Coming later”, but accepted
+queue work now snapshots cost, duration and `completesAt`; later configuration
+changes never move that persisted deadline.
 
 ## Formula conflicts found
 
@@ -58,8 +57,7 @@ commit, so a Redis failure leaves the committed PostgreSQL state intact.
 
 Only ACTIVE and accurately-described PARTIAL catalogue effects are eligible.
 PLANNED entries reject with `RESEARCH_EFFECT_UNAVAILABLE` without spending
-resources. Completion claiming, recovery, and reconciliation remain Stage 6C
-risks; no player scheduling controls are enabled here.
+resources. No player scheduling controls are enabled here.
 
 ### Stage 6B
 
@@ -73,13 +71,29 @@ risks; no player scheduling controls are enabled here.
 
 ### Stage 6C
 
-- shared idempotent completion;
-- worker and API fallback;
-- reconciliation;
-- early-job handling;
-- restart recovery;
-- duplicate-delivery protection;
-- completion notification.
+`completeResearch` is one PostgreSQL-authoritative serializable transaction
+shared by API fallback, worker and reconciliation. It locks account →
+originating planet → queue row, rechecks the persisted deadline, only raises a
+level when below the accepted target, then marks the row complete and creates
+the single notification atomically. Duplicate, missing and cancelled deliveries
+are safe no-ops.
+
+Cancellation before `completesAt` wins and refunds once; at or after that
+instant completion wins, so completed work cannot refund. Already accepted work
+for a suspended account may still complete. An early BullMQ delivery moves its
+current deterministic job back to the persisted deadline; payload owner, level,
+status and time are ignored.
+
+The research-only reconciler runs at worker startup and every 30 seconds. Its
+process-local non-overlap guard examines one stable ordered batch of at most
+100 pending rows, completes overdue rows directly, and restores missing or
+terminal future jobs as `research-<queue-id>`. PostgreSQL remains authoritative,
+so no distributed Redis lock is needed. Owned catalogue reads and a subsequent
+research start settle the caller's due work first.
+
+No production boundary split is needed yet because no ACTIVE or PARTIAL effect
+changes lazy production. Future economy effects have an extension point in the
+authoritative completion transaction before a production modifier changes.
 
 ### Stage 6D
 

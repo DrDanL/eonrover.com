@@ -14,6 +14,10 @@ const {
   reconcilePendingBuildingJobs,
   startBuildingReconciliation,
 } = require('./buildingReconciler') as typeof import('./buildingReconciler');
+const {
+  reconcilePendingResearchJobs,
+  startResearchReconciliation,
+} = require('./researchReconciler') as typeof import('./researchReconciler');
 const connection = createRedisConnection();
 
 function logCompletion(name: string) {
@@ -33,6 +37,7 @@ function logFailure(name: string) {
 const buildWorker = new Worker('build-queue', processBuildJob, { connection });
 const buildReconciliationQueue = new Queue('build-queue', { connection });
 const researchWorker = new Worker('research-queue', processResearchJob, { connection });
+const researchReconciliationQueue = new Queue('research-queue', { connection });
 const shipyardWorker = new Worker('shipyard-queue', processShipyardJob, { connection });
 const fleetWorker = new Worker('fleet-queue', processFleetJob, { connection });
 
@@ -51,6 +56,7 @@ console.log('Eon Rover worker started, listening for build/research/shipyard/fle
 
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
+let researchReconciliation: ReturnType<typeof startResearchReconciliation> | undefined;
 void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
@@ -68,6 +74,23 @@ void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUnt
     console.error('[build-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
   });
 
+void Promise.all([researchWorker.waitUntilReady(), researchReconciliationQueue.waitUntilReady()])
+  .then(() => {
+    if (shuttingDown) return;
+    researchReconciliation = startResearchReconciliation(
+      () => reconcilePendingResearchJobs(prisma, researchReconciliationQueue),
+      undefined,
+      (error) => {
+        // eslint-disable-next-line no-console
+        console.error('[research-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
+      },
+    );
+  })
+  .catch((error: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('[research-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
+  });
+
 const healthServer = http.createServer(createHealthHandler({
   database: async () => {
     await prisma.$queryRaw`SELECT 1`;
@@ -81,9 +104,11 @@ healthServer.listen(config.healthPort);
 async function shutdown() {
   shuttingDown = true;
   buildingReconciliation?.stop();
+  researchReconciliation?.stop();
   healthServer.close();
   await Promise.all([
     buildReconciliationQueue.close(),
+    researchReconciliationQueue.close(),
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),

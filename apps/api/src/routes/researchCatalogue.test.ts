@@ -105,4 +105,16 @@ describe('read-only research catalogue', () => {
     expect(response.body.activeResearch).not.toHaveProperty('jobId');
     expect(await prisma.research.findMany({ where: { userId: owner.user.id } })).toEqual(before);
   });
+
+  it('settles an overdue item once on an owned catalogue read without allowing another player to trigger it', async () => {
+    const owner = await player('research-fallback', { researchLab: 3 });
+    const other = await player('research-fallback-other');
+    const item = await prisma.researchQueueItem.create({ data: { userId: owner.user.id, planetId: owner.first.id, researchKey: 'weaponTech', targetLevel: 2, costAlloy: 1, costHeliox: 1, costAether: 1, durationSeconds: 1, startedAt: new Date(NOW.getTime() - 2_000), completesAt: new Date(NOW.getTime() - 1_000) } });
+    await request(app).get(`/api/research?planetId=${owner.first.id}`).set('Cookie', other.cookie).expect(404);
+    expect(await prisma.researchQueueItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: 'PENDING' });
+    await request(app).get(`/api/research?planetId=${owner.first.id}`).set('Cookie', owner.cookie).expect(200);
+    await request(app).get(`/api/research?planetId=${owner.first.id}`).set('Cookie', owner.cookie).expect(200);
+    expect(await prisma.research.findUniqueOrThrow({ where: { userId_key: { userId: owner.user.id, key: 'weaponTech' } } })).toMatchObject({ level: 2 });
+    expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'RESEARCH_COMPLETE' } })).toBe(1);
+  });
 });

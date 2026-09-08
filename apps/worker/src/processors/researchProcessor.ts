@@ -1,29 +1,22 @@
 import { Job } from 'bullmq';
+import { completeResearch } from '@eonrover/shared';
 import { prisma } from '../prisma';
+import { researchQueue } from '../queues';
 
-interface ResearchJobData {
+export interface ResearchJobData {
   queueItemId: string;
-  userId: string;
+  /** Legacy payload field; intentionally ignored. */
+  userId?: string;
 }
 
 export async function processResearchJob(job: Job<ResearchJobData>): Promise<void> {
-  const item = await prisma.researchQueueItem.findUnique({ where: { id: job.data.queueItemId } });
-  if (!item || item.status !== 'PENDING') return;
-
-  await prisma.$transaction(async (tx) => {
-    await tx.research.upsert({
-      where: { userId_key: { userId: job.data.userId, key: item.researchKey } },
-      update: { level: item.targetLevel },
-      create: { userId: job.data.userId, key: item.researchKey, level: item.targetLevel },
-    });
-    await tx.researchQueueItem.update({ where: { id: item.id }, data: { status: 'COMPLETE' } });
-  });
-
-  await prisma.notification.create({
-    data: {
-      userId: job.data.userId,
-      type: 'RESEARCH_COMPLETE',
-      message: `${item.researchKey} research reached level ${item.targetLevel}.`,
-    },
-  });
+  const result = await completeResearch(prisma, job.data.queueItemId);
+  if (result === 'too-early') {
+    const item = await prisma.researchQueueItem.findUnique({ where: { id: job.data.queueItemId } });
+    if (item?.status === 'PENDING') {
+      // The processor owns the currently-active job, so move that exact job
+      // instead of adding a duplicate deterministic id that BullMQ would drop.
+      await job.moveToDelayed(item.completesAt.getTime(), job.token);
+    }
+  }
 }
