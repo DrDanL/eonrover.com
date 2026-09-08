@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_PLANET_FIELD_CAPACITY = void 0;
 exports.calculatePlanetFields = calculatePlanetFields;
 const constants_1 = require("./constants");
-exports.DEFAULT_PLANET_FIELD_CAPACITY = 180;
+Object.defineProperty(exports, "DEFAULT_PLANET_FIELD_CAPACITY", { enumerable: true, get: function () { return constants_1.DEFAULT_PLANET_FIELD_CAPACITY; } });
 function assertPositiveInteger(value, label) {
     if (!Number.isSafeInteger(value) || value <= 0) {
         throw new RangeError(`${label} must be a positive integer`);

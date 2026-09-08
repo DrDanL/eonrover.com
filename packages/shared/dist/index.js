@@ -28,3 +28,4 @@ __exportStar(require("./shipyardCompletion"), exports);
 __exportStar(require("./deployMission"), exports);
 __exportStar(require("./deployArrivalCompletion"), exports);
 __exportStar(require("./deployArrivalScheduling"), exports);
+__exportStar(require("./colonizationMission"), exports);

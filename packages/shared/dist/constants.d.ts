@@ -77,6 +77,21 @@ export declare const DEFAULT_UNIVERSE_CONFIG: UniverseConfig;
 export declare const STARTING_RESOURCES: ResourceAmounts;
 export declare const BASE_STORAGE_CAPACITY = 10000;
 export declare const BASE_ENERGY_SUPPLY = 20;
+export declare const DEFAULT_PLANET_FIELD_CAPACITY = 180;
+/**
+ * The explicit starter state for a newly founded colony. Registration uses
+ * the same state today, preserving its existing homeworld provisioning
+ * behaviour while keeping future colony creation server-defined.
+ */
+export declare const COLONY_STARTER_STATE: {
+    readonly fieldCapacity: 180;
+    readonly resources: ResourceAmounts;
+    readonly buildings: {
+        readonly solarArray: 1;
+        readonly alloyMine: 0;
+        readonly helioxExtractor: 0;
+    };
+};
 export declare const GATE_ACTIVATION_FRAGMENTS = 3;
 export declare const GATE_TRAVEL_SECONDS = 15;
 export declare const GATE_ACTIVATION_REQUIREMENTS: {

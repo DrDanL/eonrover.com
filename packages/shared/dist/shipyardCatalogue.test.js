@@ -22,3 +22,14 @@ const index_1 = require("./index");
     for (const [baseSeconds, shipyardLevel, economySpeed] of [[NaN, 1, 1], [100, Infinity, 1], [100, 1, 0], [-1, 1, 1]])
         strict_1.default.throws(() => (0, index_1.shipyardDurationForCatalogue)(baseSeconds, shipyardLevel, economySpeed));
 });
+(0, node_test_1.default)('a completed Shipyard level 4 unlocks a Colony Ship without planned propulsion research', () => {
+    const colonyShip = (0, index_1.evaluateShipyardCatalogue)({
+        id: 'colonyShip',
+        shipyardLevel: 4,
+        economySpeed: 1,
+        buildingLevels: { shipyard: 4 },
+        researchLevels: {},
+    });
+    strict_1.default.deepEqual(colonyShip.requirements, [{ id: 'shipyard', requiredLevel: 4, currentLevel: 4, met: true, type: 'building' }]);
+    strict_1.default.equal(colonyShip.meetsRequirements, true);
+});

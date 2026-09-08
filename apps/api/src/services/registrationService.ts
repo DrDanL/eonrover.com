@@ -1,5 +1,5 @@
 import { PlanetType, Prisma } from '@prisma/client';
-import { DEFAULT_PLANET_FIELD_CAPACITY, PLANET_TYPES, STARTING_RESOURCES } from '@eonrover/shared';
+import { COLONY_STARTER_STATE, PLANET_TYPES } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { AppError, ERROR_CODES } from '../middleware/error';
 import {
@@ -9,7 +9,6 @@ import {
 import { generateHomeworldCoordinate, HomeworldCoordinate } from './registrationCoordinates';
 
 export const HOMEWORLD_ALLOCATION_ATTEMPTS = 10;
-const STARTER_BUILDINGS = ['alloyMine', 'helioxExtractor', 'solarArray'] as const;
 
 const PLANET_TYPE_KEYS = Object.keys(PLANET_TYPES) as Array<keyof typeof PLANET_TYPES>;
 const PLANET_TYPE_TO_DB: Record<keyof typeof PLANET_TYPES, PlanetType> = {
@@ -144,13 +143,13 @@ export async function provisionRegistration(
           solarIndex:
             planetProfile.solarIndexRange[0] +
             Math.random() * (planetProfile.solarIndexRange[1] - planetProfile.solarIndexRange[0]),
-          fieldCapacity: DEFAULT_PLANET_FIELD_CAPACITY,
-          alloy: STARTING_RESOURCES.alloy,
-          heliox: STARTING_RESOURCES.heliox,
-          aether: STARTING_RESOURCES.aether,
+          fieldCapacity: COLONY_STARTER_STATE.fieldCapacity,
+          alloy: COLONY_STARTER_STATE.resources.alloy,
+          heliox: COLONY_STARTER_STATE.resources.heliox,
+          aether: COLONY_STARTER_STATE.resources.aether,
           lastProductionAt: input.now,
           buildings: {
-            create: STARTER_BUILDINGS.map((key) => ({ key, level: key === 'solarArray' ? 1 : 0 })),
+            create: Object.entries(COLONY_STARTER_STATE.buildings).map(([key, level]) => ({ key, level })),
           },
         });
         await operations.createVerificationToken(tx, {

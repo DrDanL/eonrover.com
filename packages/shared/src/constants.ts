@@ -325,7 +325,10 @@ export const SHIPS: Record<ShipKey, ShipDefinition> = {
     attack: 1,
     shield: 10,
     armour: 6000,
-    requires: { shipyard: 4, propulsionTheory: 2 },
+    // Propulsion Theory remains a planned effect and is deliberately not a
+    // player-startable prerequisite. Colony Ships therefore rely only on the
+    // completed Shipyard level already required to construct them.
+    requires: { shipyard: 4 },
   },
   corvette: {
     key: 'corvette',
@@ -484,6 +487,22 @@ export const DEFAULT_UNIVERSE_CONFIG: UniverseConfig = {
 export const STARTING_RESOURCES: ResourceAmounts = { alloy: 500, heliox: 300, aether: 0 };
 export const BASE_STORAGE_CAPACITY = 10000;
 export const BASE_ENERGY_SUPPLY = 20;
+export const DEFAULT_PLANET_FIELD_CAPACITY = 180;
+
+/**
+ * The explicit starter state for a newly founded colony. Registration uses
+ * the same state today, preserving its existing homeworld provisioning
+ * behaviour while keeping future colony creation server-defined.
+ */
+export const COLONY_STARTER_STATE = {
+  fieldCapacity: DEFAULT_PLANET_FIELD_CAPACITY,
+  resources: STARTING_RESOURCES,
+  buildings: {
+    solarArray: 1,
+    alloyMine: 0,
+    helioxExtractor: 0,
+  },
+} as const;
 
 // --- Eon Gates ---------------------------------------------------------
 // Number of Gate Fragments a player must recover through exploration before

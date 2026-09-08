@@ -90,6 +90,31 @@ describe('read-only Shipyard catalogue', () => {
     await request(app).post(`/api/planets/${other.planet.id}/shipyard`).set('Cookie', other.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1 }).expect(201);
   });
 
+  it('accepts a Colony Ship with the completed Shipyard prerequisite and no planned research', async () => {
+    const owner = await player('shipyard-colony-ship');
+    await prisma.planet.update({
+      where: { id: owner.planet.id },
+      data: { alloy: 100_000, heliox: 100_000, aether: 100_000, lastProductionAt: new Date() },
+    });
+    await prisma.building.update({
+      where: { planetId_key: { planetId: owner.planet.id, key: 'shipyard' } },
+      data: { level: 4 },
+    });
+    await prisma.building.create({
+      data: { planetId: owner.planet.id, key: 'alloyStorage', level: 1 },
+    });
+
+    const response = await request(app)
+      .post(`/api/planets/${owner.planet.id}/shipyard`)
+      .set('Cookie', owner.cookie)
+      .set('X-Eonrover-Client', '1')
+      .send({ key: 'colonyShip', quantity: 1 })
+      .expect(201);
+
+    expect(response.body.queueItem).toMatchObject({ shipKey: 'colonyShip', quantity: 1, status: 'PENDING' });
+    expect(await prisma.research.count({ where: { userId: owner.user.id, key: 'propulsionTheory' } })).toBe(0);
+  });
+
   it('accepts only one simultaneous batch and preserves PostgreSQL state when Redis scheduling fails', async () => {
     const owner = await player('shipyard-race');
     await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 100000, heliox: 100000, aether: 100000 } });

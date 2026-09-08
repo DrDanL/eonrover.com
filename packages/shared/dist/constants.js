@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GATE_ACTIVATION_REQUIREMENTS = exports.GATE_TRAVEL_SECONDS = exports.GATE_ACTIVATION_FRAGMENTS = exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = exports.BUILDING_CATEGORIES = void 0;
+exports.GATE_ACTIVATION_REQUIREMENTS = exports.GATE_TRAVEL_SECONDS = exports.GATE_ACTIVATION_FRAGMENTS = exports.COLONY_STARTER_STATE = exports.DEFAULT_PLANET_FIELD_CAPACITY = exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = exports.BUILDING_CATEGORIES = void 0;
 const researchCatalogue_1 = require("./researchCatalogue");
 exports.BUILDING_CATEGORIES = [
     {
@@ -191,7 +191,10 @@ exports.SHIPS = {
         attack: 1,
         shield: 10,
         armour: 6000,
-        requires: { shipyard: 4, propulsionTheory: 2 },
+        // Propulsion Theory remains a planned effect and is deliberately not a
+        // player-startable prerequisite. Colony Ships therefore rely only on the
+        // completed Shipyard level already required to construct them.
+        requires: { shipyard: 4 },
     },
     corvette: {
         key: 'corvette',
@@ -318,6 +321,21 @@ exports.DEFAULT_UNIVERSE_CONFIG = {
 exports.STARTING_RESOURCES = { alloy: 500, heliox: 300, aether: 0 };
 exports.BASE_STORAGE_CAPACITY = 10000;
 exports.BASE_ENERGY_SUPPLY = 20;
+exports.DEFAULT_PLANET_FIELD_CAPACITY = 180;
+/**
+ * The explicit starter state for a newly founded colony. Registration uses
+ * the same state today, preserving its existing homeworld provisioning
+ * behaviour while keeping future colony creation server-defined.
+ */
+exports.COLONY_STARTER_STATE = {
+    fieldCapacity: exports.DEFAULT_PLANET_FIELD_CAPACITY,
+    resources: exports.STARTING_RESOURCES,
+    buildings: {
+        solarArray: 1,
+        alloyMine: 0,
+        helioxExtractor: 0,
+    },
+};
 // --- Eon Gates ---------------------------------------------------------
 // Number of Gate Fragments a player must recover through exploration before
 // an Eon Gate can be activated on one of their planets.

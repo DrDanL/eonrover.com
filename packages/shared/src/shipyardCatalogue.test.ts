@@ -19,3 +19,16 @@ test('shipyard catalogue exposes finite current definitions and prerequisite eva
 test('shipyard duration rejects invalid inputs', () => {
   for (const [baseSeconds, shipyardLevel, economySpeed] of [[NaN, 1, 1], [100, Infinity, 1], [100, 1, 0], [-1, 1, 1]]) assert.throws(() => shipyardDurationForCatalogue(baseSeconds, shipyardLevel, economySpeed));
 });
+
+test('a completed Shipyard level 4 unlocks a Colony Ship without planned propulsion research', () => {
+  const colonyShip = evaluateShipyardCatalogue({
+    id: 'colonyShip',
+    shipyardLevel: 4,
+    economySpeed: 1,
+    buildingLevels: { shipyard: 4 },
+    researchLevels: {},
+  });
+
+  assert.deepEqual(colonyShip.requirements, [{ id: 'shipyard', requiredLevel: 4, currentLevel: 4, met: true, type: 'building' }]);
+  assert.equal(colonyShip.meetsRequirements, true);
+});

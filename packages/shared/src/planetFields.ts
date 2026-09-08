@@ -1,7 +1,7 @@
-import { BUILDINGS } from './constants';
+import { BUILDINGS, DEFAULT_PLANET_FIELD_CAPACITY } from './constants';
 import { BuildingKey } from './types';
 
-export const DEFAULT_PLANET_FIELD_CAPACITY = 180;
+export { DEFAULT_PLANET_FIELD_CAPACITY };
 
 export interface PlanetFieldCalculationInput {
   capacity: number;
