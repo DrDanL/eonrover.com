@@ -1,13 +1,11 @@
 import { Router } from 'express';
-import { z } from 'zod';
-import { DEFENCES, DefenceKey, SHIPS, ShipKey, shipyardDurationSeconds } from '@eonrover/shared';
+import { SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, evaluateShipyardCatalogue } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 import { syncPlanetResources } from '../services/planetService';
-import { getBuildingLevels, getResearchLevels, requirementsMet } from '../services/requirements';
-import { shipyardQueue } from '../lib/redis';
+import { getBuildingLevels, getResearchLevels } from '../services/requirements';
 import { getUniverseConfig } from '../services/gameConfig';
-import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
+import { asyncHandler, ERROR_CODES, sendError } from '../middleware/error';
 
 const router = Router({ mergeParams: true });
 router.use(requireAuth);
@@ -24,102 +22,23 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
     sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
     return;
   }
-  const [ships, defences, queue] = await Promise.all([
+  const [{ planet: settled }, ships, buildingLevels, researchLevels, queue, config] = await Promise.all([
+    syncPlanetResources(planet.id),
     prisma.ship.findMany({ where: { planetId: planet.id } }),
-    prisma.defence.findMany({ where: { planetId: planet.id } }),
-    prisma.shipyardQueueItem.findMany({ where: { planetId: planet.id, status: 'PENDING' } }),
-  ]);
-  res.json({
-    ships: Object.values(SHIPS).map((def) => ({
-      ...def,
-      owned: ships.find((s) => s.key === def.key)?.count ?? 0,
-    })),
-    defences: Object.values(DEFENCES).map((def) => ({
-      ...def,
-      owned: defences.find((d) => d.key === def.key)?.count ?? 0,
-    })),
-    queue,
-  });
-}));
-
-const enqueueSchema = z.object({
-  itemKey: z.string(),
-  itemType: z.enum(['ship', 'defence']),
-  quantity: z.number().int().min(1).max(500),
-});
-
-router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
-  const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
-  if (!planet) {
-    sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
-    return;
-  }
-  const parsed = enqueueSchema.safeParse(req.body);
-  if (!parsed.success) {
-    sendValidationError(res, parsed.error);
-    return;
-  }
-  const { itemKey, itemType, quantity } = parsed.data;
-  const def =
-    itemType === 'ship'
-      ? (itemKey in SHIPS ? SHIPS[itemKey as ShipKey] : undefined)
-      : (itemKey in DEFENCES ? DEFENCES[itemKey as DefenceKey] : undefined);
-  if (!def) {
-    sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Unknown item');
-    return;
-  }
-
-  const [buildingLevels, researchLevels] = await Promise.all([
     getBuildingLevels(planet.id),
     getResearchLevels(req.user!.id),
+    prisma.shipyardQueueItem.findMany({
+      where: { planetId: planet.id },
+      orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
+    }),
+    getUniverseConfig(),
   ]);
-  if (!requirementsMet(def.requires, buildingLevels, researchLevels)) {
-    sendError(res, 409, ERROR_CODES.CONFLICT, 'Requirements not met');
-    return;
-  }
-
-  const totalCost = {
-    alloy: def.cost.alloy * quantity,
-    heliox: def.cost.heliox * quantity,
-    aether: def.cost.aether * quantity,
-  };
-  const { planet: fresh } = await syncPlanetResources(planet.id);
-  if (fresh.alloy < totalCost.alloy || fresh.heliox < totalCost.heliox || fresh.aether < totalCost.aether) {
-    sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, 'Insufficient resources', { cost: totalCost });
-    return;
-  }
-
-  const config = await getUniverseConfig();
-  const perUnitSeconds = shipyardDurationSeconds(
-    def.buildTimeSeconds,
-    buildingLevels.shipyard ?? 0,
-    config.economySpeed,
-  );
-  const completesAt = new Date(Date.now() + perUnitSeconds * 1000);
-
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.planet.update({
-      where: { id: planet.id },
-      data: {
-        alloy: { decrement: totalCost.alloy },
-        heliox: { decrement: totalCost.heliox },
-        aether: { decrement: totalCost.aether },
-      },
-    });
-    return tx.shipyardQueueItem.create({
-      data: { planetId: planet.id, itemKey, itemType, quantity, remaining: quantity, completesAt },
-    });
+  res.json({
+    selectedPlanet: { id: settled.id, name: settled.name, shipyardLevel: buildingLevels.shipyard ?? 0, resources: { alloy: settled.alloy, heliox: settled.heliox, aether: settled.aether } },
+    categories: SHIPYARD_CATEGORIES,
+    catalog: SHIPYARD_CATALOGUE.map((entry) => ({ ...evaluateShipyardCatalogue({ id: entry.id, shipyardLevel: buildingLevels.shipyard ?? 0, economySpeed: config.economySpeed, buildingLevels, researchLevels }), owned: ships.find((ship) => ship.key === entry.id)?.count ?? 0 })),
+    legacyQueue: queue.map((item) => ({ id: item.id, itemKey: item.itemKey, itemType: item.itemType, quantity: item.quantity, remaining: item.remaining, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status })),
   });
-
-  const delay = Math.max(0, completesAt.getTime() - Date.now());
-  const job = await shipyardQueue.add(
-    'complete-shipyard-unit',
-    { queueItemId: result.id, perUnitSeconds },
-    { delay, removeOnComplete: true, attempts: 3 },
-  );
-  await prisma.shipyardQueueItem.update({ where: { id: result.id }, data: { jobId: job.id } });
-
-  res.status(201).json({ queueItem: { ...result, jobId: job.id } });
 }));
 
 export default router;

@@ -7,3 +7,4 @@ export * from './gamePresentation';
 export * from './planetFields';
 export * from './researchCatalogue';
 export * from './researchCompletion';
+export * from './shipyardCatalogue';

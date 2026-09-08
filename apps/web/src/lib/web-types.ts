@@ -302,6 +302,13 @@ export interface ShipyardCatalogItem {
   requires?: Record<string, number>;
 }
 
+export interface ShipyardReadOnlyResponse {
+  selectedPlanet: { id: string; name: string; shipyardLevel: number; resources: ResourceAmounts };
+  categories: Array<{ id: 'civilian' | 'combat' | 'specialist'; name: string; displayOrder: number }>;
+  catalog: Array<{ id: string; key: string; name: string; description: string; category: 'civilian' | 'combat' | 'specialist'; cost: ResourceAmounts; durationSeconds: number; owned: number; statistics: { cargo: number; speed: number; fuelPerDistance: number; attack: number; shield: number; armour: number }; requirements: Array<{ id: string; requiredLevel: number; currentLevel: number; met: boolean; type: 'building' | 'research' }>; meetsRequirements: boolean; missions: readonly string[]; effect: { description: string; status: 'ACTIVE' | 'PARTIAL' | 'PLANNED' } }>;
+  legacyQueue: Array<{ id: string; itemKey: string; itemType: string; quantity: number; remaining: number; startedAt: string; completesAt: string; status: string }>;
+}
+
 export interface FleetMission {
   id: string;
   originId: string;

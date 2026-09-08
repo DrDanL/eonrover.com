@@ -7,6 +7,7 @@ import {
   SHIPS,
 } from './constants';
 import { researchCostForLevel, researchDurationForLevel } from './researchCatalogue';
+import { shipyardDurationForCatalogue } from './shipyardCatalogue';
 import { BuildingKey, PlanetEnvironment, ResearchKey, ResourceAmounts, ResourceType, ShipKey } from './types';
 
 /**
@@ -65,9 +66,7 @@ export function shipyardDurationSeconds(
   shipyardLevel: number,
   economySpeed: number,
 ): number {
-  const raw = baseSeconds / Math.max(1, Math.log2(shipyardLevel + 2));
-  const scaled = raw / Math.max(economySpeed, 0.01);
-  return Math.max(Math.round(scaled), 10);
+  return shipyardDurationForCatalogue(baseSeconds, shipyardLevel, economySpeed);
 }
 
 /**

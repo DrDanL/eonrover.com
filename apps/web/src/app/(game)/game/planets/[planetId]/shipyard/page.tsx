@@ -1,100 +1,27 @@
 'use client';
 
-import { FormEvent, useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import StatusPanel from '@/components/StatusPanel';
-import { apiGet, apiPost } from '@/lib/api';
-import { enumLabel, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
-import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
-import { ShipyardCatalogItem, ShipyardQueueItem } from '@/lib/web-types';
+import { apiGet } from '@/lib/api';
+import { enumLabel, formatNumber } from '@/lib/formatters';
+import { useApiData } from '@/lib/useApiData';
+import { ShipyardReadOnlyResponse } from '@/lib/web-types';
 
 export default function ShipyardPage() {
-  const params = useParams<{ planetId: string }>();
-  const planetId = params.planetId;
-  const now = useTicker();
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [quantities, setQuantities] = useState<Record<string, string>>({});
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-
-  const loadShipyard = useCallback(
-    () => apiGet<{ ships: ShipyardCatalogItem[]; defences: ShipyardCatalogItem[]; queue: ShipyardQueueItem[] }>(`/api/planets/${planetId}/shipyard`),
-    [planetId],
-  );
-  const { data, loading, error, reload } = useApiData(loadShipyard);
-
-  async function handleQueue(event: FormEvent<HTMLFormElement>, itemKey: string, itemType: 'ship' | 'defence') {
-    event.preventDefault();
-    const quantity = Number(quantities[itemKey] ?? 0);
-    if (!Number.isInteger(quantity) || quantity < 1) {
-      setActionError('Enter a quantity of at least 1.');
-      return;
-    }
-    setBusyKey(itemKey);
-    setActionError(null);
-    try {
-      await apiPost(`/api/planets/${planetId}/shipyard`, { itemKey, itemType, quantity });
-      setQuantities((current) => ({ ...current, [itemKey]: '' }));
-      reload();
-    } catch (err) {
-      setActionError(getErrorMessage(err));
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  const sections = [
-    { title: 'Ships', items: data?.ships ?? [], itemType: 'ship' as const },
-    { title: 'Defences', items: data?.defences ?? [], itemType: 'defence' as const },
-  ];
-
-  return (
-    <section className="stack">
-      <div className="panel stack"><h1 style={{ margin: 0 }}>Shipyard</h1><p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Build ships and planetary defences from the same queue system.</p></div>
-      {loading ? <StatusPanel message="Loading shipyard catalog..." /> : null}
-      {error ? <StatusPanel tone="error" title="Unable to load shipyard" message={error} /> : null}
-      {actionError ? <StatusPanel tone="error" title="Queue action failed" message={actionError} /> : null}
-      {!loading && !error && !data ? <StatusPanel message="No shipyard data returned." /> : null}
-      {!loading && !error && data ? (
-        <>
-          <div className="panel stack">
-            <h2 style={{ margin: 0 }}>Current queue</h2>
-            {data.queue.length === 0 ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>No shipyard jobs queued.</p> : null}
-            {data.queue.map((item) => (
-              <div className="panel stack" key={item.id}>
-                <strong>{enumLabel(item.itemKey)} × {formatNumber(item.quantity)}</strong>
-                <span style={{ color: 'var(--color-text-muted)' }}>Remaining: {formatNumber(item.remaining)} · completes in {formatRelativeCountdown(item.completesAt, now)}</span>
-              </div>
-            ))}
-          </div>
-          {sections.map((section) => (
-            <div className="stack" key={section.title}>
-              <h2 style={{ marginBottom: 0 }}>{section.title}</h2>
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-                {section.items.map((item) => (
-                  <article className="panel stack" key={item.key}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-                      <h3 style={{ margin: 0 }}>{item.name}</h3>
-                      <span className="tag">Owned {formatNumber(item.owned)}</span>
-                    </div>
-                    {item.description ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>{item.description}</p> : null}
-                    <p style={{ margin: 0 }}>Cost: {formatNumber(item.cost.alloy)} alloy, {formatNumber(item.cost.heliox)} heliox, {formatNumber(item.cost.aether)} aether</p>
-                    {item.speed ? <p style={{ margin: 0 }}>Speed: {formatNumber(item.speed)} · Cargo: {formatNumber(item.cargo ?? 0)}</p> : null}
-                    {item.attack !== undefined ? <p style={{ margin: 0 }}>Attack {formatNumber(item.attack)} · Shield {formatNumber(item.shield ?? 0)} · Armour {formatNumber(item.armour ?? 0)}</p> : null}
-                    {item.requires && Object.keys(item.requires).length > 0 ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Requires: {Object.entries(item.requires).map(([key, level]) => `${enumLabel(key)} ${level}`).join(', ')}</p> : null}
-                    <form className="stack" onSubmit={(event) => handleQueue(event, item.key, section.itemType)}>
-                      <label>
-                        Quantity
-                        <input type="number" min={1} max={500} value={quantities[item.key] ?? ''} onChange={(event) => setQuantities((current) => ({ ...current, [item.key]: event.target.value }))} />
-                      </label>
-                      <button type="submit" className="btn btn-primary" disabled={busyKey === item.key}>{busyKey === item.key ? 'Queueing...' : 'Add to queue'}</button>
-                    </form>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ))}
-        </>
-      ) : null}
-    </section>
-  );
+  const { planetId } = useParams<{ planetId: string }>();
+  const load = useCallback(() => apiGet<ShipyardReadOnlyResponse>(`/api/planets/${encodeURIComponent(planetId)}/shipyard`), [planetId]);
+  const { data, loading, error } = useApiData(load);
+  return <section className="stack">
+    <div className="panel stack"><h1 style={{ margin: 0 }}>Shipyard catalogue</h1><p className="alert" role="status">Ship construction scheduling is currently unavailable.</p><p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Existing ships and legacy queue rows are presented read-only while authoritative construction work is completed.</p></div>
+    {loading ? <StatusPanel message="Loading authoritative Shipyard catalogue..." /> : null}
+    {error ? <StatusPanel tone="error" title="Unable to load Shipyard" message={error} /> : null}
+    {!loading && !error && !data ? <StatusPanel message="No Shipyard data returned." /> : null}
+    {data ? <>
+      <div className="panel stack"><h2 style={{ margin: 0 }}>Selected Shipyard</h2><p style={{ margin: 0 }}><strong>{data.selectedPlanet.name}</strong> · Shipyard level {data.selectedPlanet.shipyardLevel}</p><p style={{ margin: 0 }}>Resources: {formatNumber(data.selectedPlanet.resources.alloy)} Alloy · {formatNumber(data.selectedPlanet.resources.heliox)} Heliox · {formatNumber(data.selectedPlanet.resources.aether)} Aether</p></div>
+      {data.legacyQueue.length ? <div className="panel stack"><h2 style={{ margin: 0 }}>Legacy queue</h2><p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Read-only legacy rows; this page does not alter them.</p>{data.legacyQueue.map((item) => <p key={item.id} style={{ margin: 0 }}>{enumLabel(item.itemKey)} × {formatNumber(item.quantity)} · {item.remaining} remaining · {item.status}</p>)}</div> : null}
+      <nav aria-label="Shipyard categories" className="research-category-nav"><ul>{data.categories.map((category) => <li key={category.id}><a href={`#shipyard-${category.id}`}>{category.name}</a></li>)}</ul></nav>
+      {data.categories.map((category) => <section className="stack" id={`shipyard-${category.id}`} key={category.id}><h2>{category.name}</h2><div className="grid research-catalogue-grid">{data.catalog.filter((ship) => ship.category === category.id).map((ship) => <article className="panel stack" key={ship.id}><div className="research-card-heading"><h3>{ship.name}</h3><span className="tag">Owned {formatNumber(ship.owned)}</span></div><p>{ship.description}</p><dl className="research-details"><div><dt>Cost</dt><dd>{formatNumber(ship.cost.alloy)} Alloy · {formatNumber(ship.cost.heliox)} Heliox · {formatNumber(ship.cost.aether)} Aether</dd></div><div><dt>Estimated duration</dt><dd>{Math.max(1, Math.round(ship.durationSeconds / 60))} minutes</dd></div><div><dt>Statistics</dt><dd>Speed {formatNumber(ship.statistics.speed)} · Cargo {formatNumber(ship.statistics.cargo)} · Fuel {ship.statistics.fuelPerDistance} · Attack {ship.statistics.attack} · Shield {ship.statistics.shield} · Armour {formatNumber(ship.statistics.armour)}</dd></div><div><dt>Effect</dt><dd>{ship.effect.description} ({ship.effect.status})</dd></div></dl><p><strong>Intended missions:</strong> {ship.missions.join(' ')}</p><ul>{ship.requirements.map((requirement) => <li key={requirement.id}>{enumLabel(requirement.id)} level {requirement.requiredLevel}: {requirement.met ? 'met' : `current ${requirement.currentLevel}`}</li>)}</ul><p role="status">{ship.meetsRequirements ? 'Requirements met. Scheduling remains unavailable.' : 'Requirements are not met.'}</p></article>)}</div></section>)}
+    </> : null}
+  </section>;
 }

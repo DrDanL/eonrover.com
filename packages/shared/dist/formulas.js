@@ -23,6 +23,7 @@ exports.resolveCombat = resolveCombat;
 exports.espionageAccuracy = espionageAccuracy;
 const constants_1 = require("./constants");
 const researchCatalogue_1 = require("./researchCatalogue");
+const shipyardCatalogue_1 = require("./shipyardCatalogue");
 /**
  * Cost of a building/research/ship at a given target level.
  * cost(level) = baseCost * growth^(level - 1)
@@ -62,9 +63,7 @@ function researchDurationSeconds(cost, researchLabLevel, researchSpeed) {
     return Math.max(Math.round(scaled * 3600), 30);
 }
 function shipyardDurationSeconds(baseSeconds, shipyardLevel, economySpeed) {
-    const raw = baseSeconds / Math.max(1, Math.log2(shipyardLevel + 2));
-    const scaled = raw / Math.max(economySpeed, 0.01);
-    return Math.max(Math.round(scaled), 10);
+    return (0, shipyardCatalogue_1.shipyardDurationForCatalogue)(baseSeconds, shipyardLevel, economySpeed);
 }
 /**
  * Hourly production for a resource-producing building.
