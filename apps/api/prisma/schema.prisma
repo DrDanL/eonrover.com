@@ -121,6 +121,8 @@ model Planet {
   defences         Defence[]
   fleetsOrigin     FleetMission[] @relation("OriginPlanet")
   fleetsTarget     FleetMission[] @relation("TargetPlanet")
+  deploysOrigin    FleetMission[] @relation("DeployOriginPlanet")
+  deploysDestination FleetMission[] @relation("DeployDestinationPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
   gate             EonGate?
@@ -271,9 +273,20 @@ model FleetMission {
   status         MissionStatus @default(OUTBOUND)
   jobId          String?
   resultSummary  Json?
+  // Stage 8B canonical deploy fields. Legacy generic missions retain their
+  // original rows and leave these nullable snapshots unset.
+  deployOriginId String?
+  deployOrigin   Planet? @relation("DeployOriginPlanet", fields: [deployOriginId], references: [id])
+  deployDestinationId String?
+  deployDestination Planet? @relation("DeployDestinationPlanet", fields: [deployDestinationId], references: [id])
+  deployShips Json?
+  deployFuelHeliox Int?
+  deployDurationSeconds Int?
 
   @@index([originId])
   @@index([status])
+  @@index([deployOriginId])
+  @@index([deployDestinationId])
 }
 
 model CombatReport {

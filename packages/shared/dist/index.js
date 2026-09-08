@@ -25,3 +25,4 @@ __exportStar(require("./researchCatalogue"), exports);
 __exportStar(require("./researchCompletion"), exports);
 __exportStar(require("./shipyardCatalogue"), exports);
 __exportStar(require("./shipyardCompletion"), exports);
+__exportStar(require("./deployMission"), exports);

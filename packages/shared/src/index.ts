@@ -9,3 +9,4 @@ export * from './researchCatalogue';
 export * from './researchCompletion';
 export * from './shipyardCatalogue';
 export * from './shipyardCompletion';
+export * from './deployMission';
