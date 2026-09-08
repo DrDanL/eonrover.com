@@ -25,7 +25,7 @@ launcher, and stop with `npm run stop:local`.
 1. Install the following tools:
 
    - Docker Desktop, including Docker Engine and Docker Compose v2;
-   - Node.js 20 or newer (the repository declares `node >=20`);
+   - Node.js 24 or newer (the repository declares `node >=24`);
    - npm (no exact npm version is pinned; use the npm supplied with a supported Node.js release);
    - Git.
 

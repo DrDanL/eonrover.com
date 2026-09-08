@@ -139,7 +139,7 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 
 ## Technical stack and tools
 
-The root requires Node.js 20 or newer and uses npm workspaces (`package.json`). The lockfile currently resolves notable packages as follows:
+The root requires Node.js 24 or newer and uses npm workspaces (`package.json`). The lockfile currently resolves notable packages as follows:
 
 | Layer | Technology |
 | --- | --- |
@@ -150,7 +150,7 @@ The root requires Node.js 20 or newer and uses npm workspaces (`package.json`). 
 | Timers/jobs | Redis 7 Alpine, BullMQ 5.81.4, ioredis 5.11.1 |
 | Local mail | Mailpit `latest` image, SMTP on 1025 and web UI on 8025 |
 | Tests | Node test runner for root/shared tests; Jest 29, ts-jest, Supertest for isolated API/worker integration; tested local launcher and disposable Compose vertical-slice harness |
-| Containers | Three multi-stage Node 20 Bullseye images plus Compose-managed infrastructure |
+| Containers | Three multi-stage Node 24 Bookworm images plus Compose-managed infrastructure |
 | Lint/build | ESLint 9 for web; API/worker scripts reference ESLint but do not declare ESLint/config locally; `tsc` for shared/API/worker |
 
 `jsonwebtoken` and `@types/jsonwebtoken` are declared in `apps/api/package.json` but are never imported. Authentication uses database sessions, not JWTs.

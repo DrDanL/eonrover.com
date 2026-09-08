@@ -1,6 +1,6 @@
 # Build context is the repository root (see docker-compose.yml) so that npm
 # workspaces can resolve the @eonrover/shared package.
-FROM node:20-bullseye-slim AS base
+FROM node:24-bookworm-slim AS base
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends openssl curl && rm -rf /var/lib/apt/lists/*
 

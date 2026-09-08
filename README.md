@@ -16,7 +16,7 @@ near-instant fleet travel between them.
 
 ## Local quick start
 
-Install Node.js 20 or newer, Docker, and Docker Compose, then run this command from the repository
+Install Node.js 24 or newer, Docker, and Docker Compose, then run this command from the repository
 root:
 
 ```bash
