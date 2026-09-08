@@ -210,6 +210,10 @@ model ShipyardQueueItem {
   itemType    String // 'ship' | 'defence'
   quantity    Int
   remaining   Int
+  costAlloy   Int
+  costHeliox  Int
+  costAether  Int
+  durationSeconds Int
   startedAt   DateTime    @default(now())
   completesAt DateTime
   status      QueueStatus @default(PENDING)

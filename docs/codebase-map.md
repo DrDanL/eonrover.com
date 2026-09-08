@@ -14,6 +14,7 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - Stage 5C2 persists a positive planet capacity, derives completed/reserved use from authoritative rows, blocks over-capacity starts inside the planet lock, and presents defensive full/legacy-over-capacity states without adding expansion gameplay.
 - Stage 6D enables the authenticated research workflow with authoritative start/cancellation, account-wide shell state and completion refresh; Stage 6C's PostgreSQL-authoritative completion/reconciliation remains the authority.
 - Stage 7A provides a typed, read-only Shipyard catalogue for the seven persisted ship keys. Existing Shipyard POST/worker queue behaviour is deliberately not exposed by the player Shipyard route until the Stage 7B–7D authoritative construction workflow is implemented.
+- Stage 7B adds API-only server-authoritative Ship batches: serializable account → planet → queue locks, one pending batch per planet, immutable accepted economics/duration snapshots, exact 50% cancellation refunds, and best-effort deterministic Redis wake-ups. Completion/reconciliation and player controls remain deferred.
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 

@@ -2,6 +2,7 @@ import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { SESSION_COOKIE, sessionTokenDigest } from '../lib/auth';
+import { shipyardQueue } from '../lib/redis';
 
 const app = createApp();
 let slot = 700;
@@ -15,9 +16,9 @@ describe('read-only Shipyard catalogue', () => {
   it('requires ownership, presents selected authoritative state and does not mutate legacy rows', async () => {
     const owner = await player('shipyard-owner'); const other = await player('shipyard-other');
     await prisma.ship.create({ data: { planetId: owner.planet.id, key: 'transporter', count: 3 } });
-    const pending = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 2, remaining: 2, completesAt: new Date(Date.now() + 60000), jobId: 'private-job' } });
-    const completed = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'probe', itemType: 'ship', quantity: 1, remaining: 0, status: 'COMPLETE', completesAt: new Date() } });
-    const cancelled = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'recycler', itemType: 'ship', quantity: 1, remaining: 1, status: 'CANCELLED', completesAt: new Date() } });
+    const pending = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 2, remaining: 2, costAlloy: 4000, costHeliox: 2000, costAether: 0, durationSeconds: 600, completesAt: new Date(Date.now() + 60000), jobId: 'private-job' } });
+    const completed = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'probe', itemType: 'ship', quantity: 1, remaining: 0, costAlloy: 800, costHeliox: 400, costAether: 0, durationSeconds: 300, status: 'COMPLETE', completesAt: new Date() } });
+    const cancelled = await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'recycler', itemType: 'ship', quantity: 1, remaining: 1, costAlloy: 5000, costHeliox: 3000, costAether: 0, durationSeconds: 600, status: 'CANCELLED', completesAt: new Date() } });
     await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).expect(401);
     await request(app).get(`/api/planets/${other.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(404);
     const response = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
@@ -35,7 +36,52 @@ describe('read-only Shipyard catalogue', () => {
     expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject({ remaining: 2, status: 'PENDING', jobId: 'private-job' });
     expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: completed.id } })).toMatchObject({ status: 'COMPLETE' });
     expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: cancelled.id } })).toMatchObject({ status: 'CANCELLED' });
-    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ itemKey: 'scout', itemType: 'ship', quantity: 1 }).expect(404);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ itemKey: 'scout', itemType: 'ship', quantity: 1 }).expect(400);
     expect(await prisma.shipyardQueueItem.count({ where: { planetId: owner.planet.id } })).toBe(3);
+  });
+
+  it('starts one canonical batch with snapshots, ignores spoofed values, and cancels with one 50% refund', async () => {
+    const owner = await player('shipyard-start');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10000, heliox: 10000, aether: 10000 } });
+    const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 2, cost: { alloy: 1 }, durationSeconds: 1, completesAt: '1970-01-01', statistics: { speed: 1 } }).expect(201);
+    expect(started.body.queueItem).toMatchObject({ shipKey: 'scout', shipName: 'Scout', quantity: 2, cost: { alloy: 4000, heliox: 2000, aether: 0 }, durationSeconds: 900, status: 'PENDING' });
+    expect(JSON.stringify(started.body)).not.toContain('jobId');
+    const stored = await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: started.body.queueItem.id } });
+    expect(stored).toMatchObject({ planetId: owner.planet.id, itemKey: 'scout', itemType: 'ship', quantity: 2, remaining: 2, costAlloy: 4000, costHeliox: 2000, costAether: 0, durationSeconds: 900, status: 'PENDING' });
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: 6000, heliox: 8000, aether: 10000 });
+    const cancelled = await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${stored.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    expect(cancelled.body).toEqual({ queueItem: { id: stored.id, status: 'CANCELLED' }, refund: { alloy: 2000, heliox: 1000, aether: 0 } });
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${stored.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(409);
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: 8000, heliox: 9000, aether: 10000 });
+  });
+
+  it('enforces canonical validation, prerequisites, ownership, and one pending batch per planet', async () => {
+    const owner = await player('shipyard-rules'); const other = await player('shipyard-rules-other');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 100000, heliox: 100000, aether: 100000 } });
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'unknown', quantity: 1 }).expect(400);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 0 }).expect(400);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 101 }).expect(400);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'colonyShip', quantity: 1 }).expect(409);
+    await request(app).post(`/api/planets/${other.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1 }).expect(404);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1 }).expect(201);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1 }).expect(409);
+    await prisma.planet.update({ where: { id: other.planet.id }, data: { alloy: 10000, heliox: 10000, aether: 10000 } });
+    await request(app).post(`/api/planets/${other.planet.id}/shipyard`).set('Cookie', other.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1 }).expect(201);
+  });
+
+  it('accepts only one simultaneous batch and preserves PostgreSQL state when Redis scheduling fails', async () => {
+    const owner = await player('shipyard-race');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 100000, heliox: 100000, aether: 100000 } });
+    const start = () => request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1 });
+    const responses = await Promise.all([start(), start()]);
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    expect(await prisma.shipyardQueueItem.count({ where: { planetId: owner.planet.id, status: 'PENDING' } })).toBe(1);
+    const queued = await prisma.shipyardQueueItem.findFirstOrThrow({ where: { planetId: owner.planet.id, status: 'PENDING' } });
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${queued.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    jest.spyOn(shipyardQueue, 'add').mockRejectedValueOnce(new Error('Redis unavailable'));
+    const acceptedWithoutRedis = await start().expect(201);
+    expect(acceptedWithoutRedis.body.scheduling).toBe('pending');
+    expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: acceptedWithoutRedis.body.queueItem.id } })).toMatchObject({ status: 'PENDING', costAlloy: 2000, costHeliox: 1000 });
+    jest.restoreAllMocks();
   });
 });
