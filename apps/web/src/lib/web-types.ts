@@ -358,6 +358,29 @@ export interface FleetDeploymentsResponse {
   } | null;
 }
 
+export interface FleetColonizationsResponse {
+  selectedOrigin: {
+    id: string;
+    name: string;
+    coordinates: { galaxy: number; system: number; slot: number };
+    heliox: number;
+    availableColonyShips: number;
+  };
+  availableTargetSlots: number[];
+  activeColonization: {
+    origin: {
+      id: string;
+      name: string;
+      coordinates: { galaxy: number; system: number; slot: number };
+    };
+    target: { coordinates: { galaxy: number; system: number; slot: number } };
+    status: string;
+    departedAt: string;
+    arrivesAt: string;
+    durationSeconds: number;
+  } | null;
+}
+
 export interface GalaxySlot {
   slot: number;
   empty: boolean;
