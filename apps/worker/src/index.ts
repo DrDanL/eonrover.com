@@ -12,7 +12,7 @@ const { processShipyardJob } = require('./processors/shipyardProcessor') as type
 const { processDeployArrivalJob } = require('./processors/deployArrivalProcessor') as typeof import('./processors/deployArrivalProcessor');
 const { processColonizationArrivalJob } = require('./processors/colonizationArrivalProcessor') as typeof import('./processors/colonizationArrivalProcessor');
 const { processTransportArrivalJob } = require('./processors/transportArrivalProcessor') as typeof import('./processors/transportArrivalProcessor');
-const { deployArrivalQueue, colonizationArrivalQueue } = require('./queues') as typeof import('./queues');
+const { deployArrivalQueue, colonizationArrivalQueue, transportArrivalQueue } = require('./queues') as typeof import('./queues');
 const {
   reconcilePendingBuildingJobs,
   startBuildingReconciliation,
@@ -33,6 +33,10 @@ const {
   reconcilePendingColonizationArrivalJobs,
   startColonizationArrivalReconciliation,
 } = require('./colonizationArrivalReconciler') as typeof import('./colonizationArrivalReconciler');
+const {
+  reconcilePendingTransportArrivalJobs,
+  startTransportArrivalReconciliation,
+} = require('./transportArrivalReconciler') as typeof import('./transportArrivalReconciler');
 const connection = createRedisConnection();
 
 function logCompletion(name: string) {
@@ -86,6 +90,7 @@ let researchReconciliation: ReturnType<typeof startResearchReconciliation> | und
 let shipyardReconciliation: ReturnType<typeof startShipyardReconciliation> | undefined;
 let deployArrivalReconciliation: ReturnType<typeof startDeployArrivalReconciliation> | undefined;
 let colonizationArrivalReconciliation: ReturnType<typeof startColonizationArrivalReconciliation> | undefined;
+let transportArrivalReconciliation: ReturnType<typeof startTransportArrivalReconciliation> | undefined;
 void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
@@ -171,6 +176,23 @@ void Promise.all([colonizationArrivalWorker.waitUntilReady(), colonizationArriva
     console.error('[colonization-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
   });
 
+void Promise.all([transportArrivalWorker.waitUntilReady(), transportArrivalQueue.waitUntilReady()])
+  .then(() => {
+    if (shuttingDown) return;
+    transportArrivalReconciliation = startTransportArrivalReconciliation(
+      () => reconcilePendingTransportArrivalJobs(prisma, transportArrivalQueue),
+      undefined,
+      (error) => {
+        // eslint-disable-next-line no-console
+        console.error('[transport-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
+      },
+    );
+  })
+  .catch((error: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('[transport-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
+  });
+
 const healthServer = http.createServer(createHealthHandler({
   database: async () => {
     await prisma.$queryRaw`SELECT 1`;
@@ -188,6 +210,7 @@ async function shutdown() {
   shipyardReconciliation?.stop();
   deployArrivalReconciliation?.stop();
   colonizationArrivalReconciliation?.stop();
+  transportArrivalReconciliation?.stop();
   healthServer.close();
   await Promise.all([
     buildReconciliationQueue.close(),
@@ -195,6 +218,7 @@ async function shutdown() {
     shipyardReconciliationQueue.close(),
     deployArrivalQueue.close(),
     colonizationArrivalQueue.close(),
+    transportArrivalQueue.close(),
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),
