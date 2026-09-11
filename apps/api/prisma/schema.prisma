@@ -51,6 +51,7 @@ model User {
   colonizationMissions FleetMission[] @relation("ColonizationAccount")
   espionageOriginMissions FleetMission[] @relation("EspionageOriginAccount")
   espionageTargetMissions FleetMission[] @relation("EspionageTargetAccount")
+  espionageProbeReports EspionageProbeReport[] @relation("EspionageProbeReportAttacker")
 
   @@index([status])
 }
@@ -130,6 +131,7 @@ model Planet {
   transportsDestination FleetMission[] @relation("TransportDestinationPlanet")
   espionageOriginMissions FleetMission[] @relation("EspionageOriginPlanet")
   espionageTargetMissions FleetMission[] @relation("EspionageTargetPlanet")
+  espionageProbeReports EspionageProbeReport[] @relation("EspionageProbeReportTarget")
   createdByColonization FleetMission? @relation("ColonizationCreatedPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
@@ -279,6 +281,16 @@ enum EspionageProbeMissionPhase {
   COMPLETE
 }
 
+// Canonical Probe report disclosure tiers. This separate enum and report model
+// deliberately do not reinterpret legacy EspionageReport rows or their raw
+// accuracy/data payloads.
+enum EspionageProbeDisclosureTier {
+  IDENTITY
+  RESOURCES
+  BUILDINGS
+  FORCES
+}
+
 model FleetMission {
   id             String        @id @default(uuid())
   originId       String
@@ -341,6 +353,7 @@ model FleetMission {
   espionageOutboundDurationSeconds Int?
   espionageReturnDurationSeconds Int?
   espionageProbePhase EspionageProbeMissionPhase?
+  espionageProbeReport EspionageProbeReport?
   // Stage 9B canonical colonisation fields. Existing generic COLONIZE rows
   // remain legacy data unless all future lifecycle code explicitly supplies
   // these snapshots.
@@ -397,6 +410,25 @@ model EspionageReport {
   data       Json
 
   @@index([ownerId])
+}
+
+// One immutable, canonical disclosure snapshot per canonical Probe mission.
+// This remains separate from the legacy raw EspionageReport model and has no
+// public route or completion wiring until a later stage.
+model EspionageProbeReport {
+  id                 String                       @id @default(uuid())
+  missionId          String                       @unique
+  mission            FleetMission                 @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  attackerId         String
+  attacker           User                         @relation("EspionageProbeReportAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
+  targetPlanetId     String
+  targetPlanet       Planet                       @relation("EspionageProbeReportTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+  createdAt          DateTime
+  tier               EspionageProbeDisclosureTier
+  disclosureSnapshot Json
+
+  @@index([attackerId, createdAt])
+  @@index([targetPlanetId])
 }
 
 model DebrisField {
