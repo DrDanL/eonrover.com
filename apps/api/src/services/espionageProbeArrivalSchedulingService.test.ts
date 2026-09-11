@@ -229,10 +229,10 @@ describe('canonical Espionage Probe wake-up scheduling', () => {
     expect(await prisma.notification.count({ where: { userId: failedData.attacker.id, type: 'ESPIONAGE_REPORT_READY' } })).toBe(1);
   });
 
-  it('adds no Probe worker consumer and leaves the legacy Fleet queue untouched', () => {
+  it('keeps the Probe scheduler isolated from the legacy Fleet queue', () => {
     const root = resolve(__dirname, '../../../..');
     const workerEntry = readFileSync(resolve(root, 'apps/worker/src/index.ts'), 'utf8');
-    expect(workerEntry).not.toContain("new Worker('espionage-probe-arrival-queue'");
+    expect(workerEntry).toContain("new Worker('espionage-probe-arrival-queue', processEspionageProbeArrivalJob");
     expect(workerEntry).not.toContain("new Worker('fleet-queue'");
     expect(fleetQueue.name).toBe('fleet-queue');
     expect(espionageProbeArrivalQueue.name).toBe('espionage-probe-arrival-queue');

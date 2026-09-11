@@ -14,3 +14,6 @@ export const colonizationArrivalQueue = new Queue('colonization-arrival-queue', 
 // Canonical transport wake-ups remain isolated from the deliberately dormant
 // legacy fleet queue. Stage 10B5b has no transport reconciliation.
 export const transportArrivalQueue = new Queue('transport-arrival-queue', { connection });
+// Canonical Probe wake-ups are isolated from both the trusted mission queues
+// and the deliberately dormant legacy fleet queue.
+export const espionageProbeArrivalQueue = new Queue('espionage-probe-arrival-queue', { connection });

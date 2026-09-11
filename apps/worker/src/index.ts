@@ -12,7 +12,8 @@ const { processShipyardJob } = require('./processors/shipyardProcessor') as type
 const { processDeployArrivalJob } = require('./processors/deployArrivalProcessor') as typeof import('./processors/deployArrivalProcessor');
 const { processColonizationArrivalJob } = require('./processors/colonizationArrivalProcessor') as typeof import('./processors/colonizationArrivalProcessor');
 const { processTransportArrivalJob } = require('./processors/transportArrivalProcessor') as typeof import('./processors/transportArrivalProcessor');
-const { deployArrivalQueue, colonizationArrivalQueue, transportArrivalQueue } = require('./queues') as typeof import('./queues');
+const { processEspionageProbeArrivalJob } = require('./processors/espionageProbeArrivalProcessor') as typeof import('./processors/espionageProbeArrivalProcessor');
+const { deployArrivalQueue, colonizationArrivalQueue, transportArrivalQueue, espionageProbeArrivalQueue } = require('./queues') as typeof import('./queues');
 const {
   reconcilePendingBuildingJobs,
   startBuildingReconciliation,
@@ -68,6 +69,9 @@ const colonizationArrivalWorker = new Worker('colonization-arrival-queue', proce
 // This is a wake-up consumer only. Lost-job recovery is intentionally deferred
 // to the following transport reconciliation stage.
 const transportArrivalWorker = new Worker('transport-arrival-queue', processTransportArrivalJob, { connection });
+// Probe work uses its own deterministic queue. Missing-job recovery remains a
+// later stage; this worker only wakes the shared authoritative lifecycle.
+const espionageProbeArrivalWorker = new Worker('espionage-probe-arrival-queue', processEspionageProbeArrivalJob, { connection });
 
 for (const [name, worker] of [
   ['build-queue', buildWorker],
@@ -76,13 +80,14 @@ for (const [name, worker] of [
   ['deploy-arrival-queue', deployArrivalWorker],
   ['colonization-arrival-queue', colonizationArrivalWorker],
   ['transport-arrival-queue', transportArrivalWorker],
+  ['espionage-probe-arrival-queue', espionageProbeArrivalWorker],
 ] as const) {
   worker.on('completed', logCompletion(name));
   worker.on('failed', logFailure(name));
 }
 
 // eslint-disable-next-line no-console
-console.log('Eon Rover worker started, listening for build/research/shipyard/deploy-arrival/colonization-arrival/transport-arrival events. Legacy fleet jobs are intentionally not consumed.');
+console.log('Eon Rover worker started, listening for build/research/shipyard/deploy-arrival/colonization-arrival/transport-arrival/espionage-probe-arrival events. Legacy fleet jobs are intentionally not consumed.');
 
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
@@ -219,12 +224,14 @@ async function shutdown() {
     deployArrivalQueue.close(),
     colonizationArrivalQueue.close(),
     transportArrivalQueue.close(),
+    espionageProbeArrivalQueue.close(),
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),
     deployArrivalWorker.close(),
     colonizationArrivalWorker.close(),
     transportArrivalWorker.close(),
+    espionageProbeArrivalWorker.close(),
   ]);
   process.exit(0);
 }
