@@ -37,3 +37,4 @@ __exportStar(require("./coordinateLock"), exports);
 __exportStar(require("./colonizationArrivalCompletion"), exports);
 __exportStar(require("./espionageProbeMission"), exports);
 __exportStar(require("./espionageDisclosure"), exports);
+__exportStar(require("./espionageProbeCompletion"), exports);
