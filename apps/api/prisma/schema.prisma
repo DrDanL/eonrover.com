@@ -124,6 +124,8 @@ model Planet {
   fleetsTarget     FleetMission[] @relation("TargetPlanet")
   deploysOrigin    FleetMission[] @relation("DeployOriginPlanet")
   deploysDestination FleetMission[] @relation("DeployDestinationPlanet")
+  transportsOrigin FleetMission[] @relation("TransportOriginPlanet")
+  transportsDestination FleetMission[] @relation("TransportDestinationPlanet")
   createdByColonization FleetMission? @relation("ColonizationCreatedPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
@@ -256,6 +258,15 @@ enum MissionStatus {
   RECALLED
 }
 
+// Canonical transport lifecycle only. It remains nullable so legacy generic
+// FleetMission rows keep their original MissionStatus semantics untouched.
+enum TransportMissionPhase {
+  OUTBOUND
+  AWAITING_DESTINATION_CAPACITY
+  RETURNING
+  COMPLETE
+}
+
 model FleetMission {
   id             String        @id @default(uuid())
   originId       String
@@ -284,6 +295,23 @@ model FleetMission {
   deployShips Json?
   deployFuelHeliox Int?
   deployDurationSeconds Int?
+  // Stage 10B canonical transport fields. Legacy generic TRANSPORT rows leave
+  // every transport snapshot and phase null; later transport lifecycle code
+  // must use only these canonical fields as its authority.
+  transportOriginId String?
+  transportOrigin Planet? @relation("TransportOriginPlanet", fields: [transportOriginId], references: [id])
+  transportDestinationId String?
+  transportDestination Planet? @relation("TransportDestinationPlanet", fields: [transportDestinationId], references: [id])
+  transportShips Json?
+  transportCargo Json?
+  transportRemainingCargo Json?
+  transportCapacity Int?
+  transportOutboundFuelHeliox Int?
+  transportReturnFuelHeliox Int?
+  transportTotalReservedFuelHeliox Int?
+  transportOutboundDurationSeconds Int?
+  transportReturnDurationSeconds Int?
+  transportPhase TransportMissionPhase?
   // Stage 9B canonical colonisation fields. Existing generic COLONIZE rows
   // remain legacy data unless all future lifecycle code explicitly supplies
   // these snapshots.
@@ -304,6 +332,8 @@ model FleetMission {
   @@index([status])
   @@index([deployOriginId])
   @@index([deployDestinationId])
+  @@index([transportOriginId, transportPhase])
+  @@index([transportDestinationId])
   @@index([colonizationAccountId])
 }
 
