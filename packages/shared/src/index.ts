@@ -20,3 +20,4 @@ export * from './colonizationArrivalScheduling';
 export * from './coordinateLock';
 export * from './colonizationArrivalCompletion';
 export * from './espionageProbeMission';
+export * from './espionageDisclosure';
