@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GATE_ACTIVATION_REQUIREMENTS = exports.GATE_TRAVEL_SECONDS = exports.GATE_ACTIVATION_FRAGMENTS = exports.COLONY_STARTER_STATE = exports.DEFAULT_PLANET_FIELD_CAPACITY = exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = exports.BUILDING_CATEGORIES = void 0;
+exports.GATE_ACTIVATION_REQUIREMENTS = exports.GATE_TRAVEL_SECONDS = exports.GATE_ACTIVATION_FRAGMENTS = exports.COLONY_STARTER_STATE = exports.DEFAULT_PLANET_FIELD_CAPACITY = exports.BASE_ENERGY_SUPPLY = exports.BASE_STORAGE_CAPACITY = exports.STARTING_RESOURCES = exports.GALAXY_COORDINATE_BOUNDS = exports.DEFAULT_UNIVERSE_CONFIG = exports.PLANET_TYPES = exports.DEFENCES = exports.SHIPS = exports.RESEARCH = exports.BUILDINGS = exports.BUILDING_CATEGORIES = void 0;
 const researchCatalogue_1 = require("./researchCatalogue");
 exports.BUILDING_CATEGORIES = [
     {
@@ -318,6 +318,16 @@ exports.DEFAULT_UNIVERSE_CONFIG = {
     newPlayerProtectionHours: 72,
     maxPlanetsPerPlayer: 9,
 };
+/**
+ * The bounded coordinate space used by homeworld allocation and public Galaxy
+ * browsing. Mission-specific services must resolve any target server-side;
+ * these bounds are not a client target-selection contract.
+ */
+exports.GALAXY_COORDINATE_BOUNDS = Object.freeze({
+    galaxy: Object.freeze({ min: 1, max: 6 }),
+    system: Object.freeze({ min: 1, max: 400 }),
+    slot: Object.freeze({ min: 1, max: 12 }),
+});
 exports.STARTING_RESOURCES = { alloy: 500, heliox: 300, aether: 0 };
 exports.BASE_STORAGE_CAPACITY = 10000;
 exports.BASE_ENERGY_SUPPLY = 20;

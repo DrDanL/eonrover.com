@@ -484,6 +484,17 @@ export const DEFAULT_UNIVERSE_CONFIG: UniverseConfig = {
   maxPlanetsPerPlayer: 9,
 };
 
+/**
+ * The bounded coordinate space used by homeworld allocation and public Galaxy
+ * browsing. Mission-specific services must resolve any target server-side;
+ * these bounds are not a client target-selection contract.
+ */
+export const GALAXY_COORDINATE_BOUNDS = Object.freeze({
+  galaxy: Object.freeze({ min: 1, max: 6 }),
+  system: Object.freeze({ min: 1, max: 400 }),
+  slot: Object.freeze({ min: 1, max: 12 }),
+});
+
 export const STARTING_RESOURCES: ResourceAmounts = { alloy: 500, heliox: 300, aether: 0 };
 export const BASE_STORAGE_CAPACITY = 10000;
 export const BASE_ENERGY_SUPPLY = 20;

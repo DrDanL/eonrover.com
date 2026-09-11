@@ -417,14 +417,20 @@ export interface FleetTransportsResponse {
   } | null;
 }
 
-export interface GalaxySlot {
-  slot: number;
-  empty: boolean;
-  planetId?: string;
-  name?: string;
-  planetType?: string;
-  owner?: string;
-  protected?: boolean;
+export type GalaxySlot =
+  | { slot: number; occupancy: 'empty' }
+  | { slot: number; occupancy: 'unavailable' }
+  | {
+    slot: number;
+    occupancy: 'public';
+    planet: { name: string; type: string };
+    owner: { username: string; protected: boolean };
+  };
+
+export interface GalaxySystemResponse {
+  galaxy: number;
+  system: number;
+  slots: GalaxySlot[];
 }
 
 export interface GameMessage {

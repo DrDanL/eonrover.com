@@ -74,6 +74,25 @@ export interface UniverseConfig {
     maxPlanetsPerPlayer: number;
 }
 export declare const DEFAULT_UNIVERSE_CONFIG: UniverseConfig;
+/**
+ * The bounded coordinate space used by homeworld allocation and public Galaxy
+ * browsing. Mission-specific services must resolve any target server-side;
+ * these bounds are not a client target-selection contract.
+ */
+export declare const GALAXY_COORDINATE_BOUNDS: Readonly<{
+    galaxy: Readonly<{
+        min: 1;
+        max: 6;
+    }>;
+    system: Readonly<{
+        min: 1;
+        max: 400;
+    }>;
+    slot: Readonly<{
+        min: 1;
+        max: 12;
+    }>;
+}>;
 export declare const STARTING_RESOURCES: ResourceAmounts;
 export declare const BASE_STORAGE_CAPACITY = 10000;
 export declare const BASE_ENERGY_SUPPLY = 20;

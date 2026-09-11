@@ -1,4 +1,4 @@
-import { NextFunction, Request, Response } from 'express';
+import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import {
   clearSessionCookie,
@@ -24,45 +24,58 @@ declare global {
   }
 }
 
-export const requireAuth = asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  const rawToken = req.cookies?.[SESSION_COOKIE];
-  if (typeof rawToken !== 'string' || !rawToken) {
-    sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
-    return;
-  }
+function authenticatedRequest(options: { updateLastActiveAt: boolean; revokeInvalidSession: boolean; upgradeLegacySession: boolean }): RequestHandler {
+  return asyncHandler(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const rawToken = req.cookies?.[SESSION_COOKIE];
+    if (typeof rawToken !== 'string' || !rawToken) {
+      sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
+      return;
+    }
 
-  const now = new Date();
-  const session = await resolveSessionToken(rawToken, now);
-  if (!session) {
-    clearSessionCookie(res);
-    sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
-    return;
-  }
+    const now = new Date();
+    const session = await resolveSessionToken(rawToken, now, options.upgradeLegacySession);
+    if (!session) {
+      clearSessionCookie(res);
+      sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
+      return;
+    }
 
-  if (session.expiresAt <= now) {
-    await prisma.session.deleteMany({ where: { id: session.id } });
-    clearSessionCookie(res);
-    sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
-    return;
-  }
+    if (session.expiresAt <= now) {
+      if (options.revokeInvalidSession) await prisma.session.deleteMany({ where: { id: session.id } });
+      clearSessionCookie(res);
+      sendError(res, 401, ERROR_CODES.UNAUTHENTICATED, 'Not authenticated');
+      return;
+    }
 
-  if (!isUserPermittedToSignIn(session.user)) {
-    await prisma.session.deleteMany({ where: { id: session.id } });
-    clearSessionCookie(res);
-    sendError(res, 403, ERROR_CODES.ACCOUNT_UNAVAILABLE, 'This account is unavailable.');
-    return;
-  }
-  req.user = {
-    id: session.user.id,
-    email: session.user.email,
-    username: session.user.username,
-    role: session.user.role,
-    status: session.user.status,
-  };
-  req.sessionId = session.id;
-  prisma.user.update({ where: { id: session.user.id }, data: { lastActiveAt: new Date() } }).catch(() => undefined);
-  next();
-});
+    if (!isUserPermittedToSignIn(session.user)) {
+      if (options.revokeInvalidSession) await prisma.session.deleteMany({ where: { id: session.id } });
+      clearSessionCookie(res);
+      sendError(res, 403, ERROR_CODES.ACCOUNT_UNAVAILABLE, 'This account is unavailable.');
+      return;
+    }
+    req.user = {
+      id: session.user.id,
+      email: session.user.email,
+      username: session.user.username,
+      role: session.user.role,
+      status: session.user.status,
+    };
+    req.sessionId = session.id;
+    if (options.updateLastActiveAt) {
+      prisma.user.update({ where: { id: session.user.id }, data: { lastActiveAt: new Date() } }).catch(() => undefined);
+    }
+    next();
+  });
+}
+
+/** Authentication boundary for normal player commands and reads. */
+export const requireAuth = authenticatedRequest({ updateLastActiveAt: true, revokeInvalidSession: true, upgradeLegacySession: true });
+
+/**
+ * Authentication boundary for explicitly read-only projections. It verifies
+ * the same session and account eligibility without touching activity state.
+ */
+export const requireReadOnlyAuth = authenticatedRequest({ updateLastActiveAt: false, revokeInvalidSession: false, upgradeLegacySession: false });
 
 export function requireRole(...roles: Array<'MODERATOR' | 'ADMIN'>) {
   return (req: Request, res: Response, next: NextFunction): void => {

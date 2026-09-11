@@ -77,7 +77,11 @@ export function clearSessionCookie(res: Response): void {
  * Temporary Stage 2C compatibility for sessions created before token digests
  * were introduced. Remove once every possible 14-day legacy session is stale.
  */
-export async function resolveSessionToken(rawToken: string, now = new Date()): Promise<SessionWithUser | null> {
+export async function resolveSessionToken(
+  rawToken: string,
+  now = new Date(),
+  upgradeLegacySession = true,
+): Promise<SessionWithUser | null> {
   if (!rawToken || rawToken.length > MAX_PRESENTED_SESSION_TOKEN_LENGTH) return null;
 
   const digest = sessionTokenDigest(rawToken);
@@ -91,6 +95,7 @@ export async function resolveSessionToken(rawToken: string, now = new Date()): P
   if (!legacy) return null;
 
   if (legacy.expiresAt <= now || !isUserPermittedToSignIn(legacy.user)) return legacy;
+  if (!upgradeLegacySession) return legacy;
 
   try {
     return await prisma.session.update({
