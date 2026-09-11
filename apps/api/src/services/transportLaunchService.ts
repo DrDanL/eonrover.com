@@ -3,6 +3,10 @@ import { ResourceAmounts, TransportMissionPlan, planTransportMission } from '@eo
 import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
+import {
+  TransportSchedulingOutcome,
+  scheduleTransportArrivalWakeup,
+} from './transportArrivalSchedulingService';
 
 const SERIALIZABLE_TRANSACTION_ATTEMPTS = 3;
 
@@ -48,6 +52,8 @@ export interface AcceptedTransportLaunch {
   arrivesAt: Date;
   returnsAt: Date;
   phase: 'OUTBOUND';
+  /** Internal-only best-effort wake-up result; PostgreSQL acceptance is final. */
+  schedulingOutcome: TransportSchedulingOutcome;
 }
 
 function isRetryableTransactionError(error: unknown): boolean {
@@ -107,7 +113,7 @@ export async function launchCanonicalTransport(input: TransportLaunchInput): Pro
 
   for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const accepted = await prisma.$transaction(async (tx) => {
         // Canonical lock order: account → origin planet → destination planet
         // → origin Transporter inventory → active canonical transport rows.
         await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.userId} FOR UPDATE`;
@@ -243,6 +249,12 @@ export async function launchCanonicalTransport(input: TransportLaunchInput): Pro
           phase: 'OUTBOUND' as const,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // The accepted reservation is durable before Redis is touched. A failed
+      // wake-up is intentionally recoverable in the later reconciliation stage.
+      return {
+        ...accepted,
+        schedulingOutcome: await scheduleTransportArrivalWakeup(accepted.missionId),
+      };
     } catch (error) {
       if (error instanceof TransportLaunchError) throw error;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

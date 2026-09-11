@@ -3,6 +3,7 @@ import { ResourceAmounts, storageCapacity } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
+import { scheduleTransportReturnWakeup } from './transportArrivalSchedulingService';
 
 const SERIALIZABLE_TRANSACTION_ATTEMPTS = 3;
 
@@ -117,7 +118,7 @@ export async function settleCanonicalTransport(
 
   for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const outcome = await prisma.$transaction(async (tx) => {
         // Canonical lock order: account → origin → destination → mission →
         // destination resource state (or origin Transporter inventory on return).
         const accountLocks = await tx.$queryRaw<Array<{ id: string }>>`
@@ -235,6 +236,10 @@ export async function settleCanonicalTransport(
 
         return 'noop';
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // Cargo and the RETURNING transition are committed before a best-effort
+      // Redis wake-up. Scheduling failure never reverses delivery.
+      if (outcome === 'delivered') await scheduleTransportReturnWakeup(missionId, currentTime);
+      return outcome;
     } catch (error) {
       if (isRetryableTransactionError(error) && attempt + 1 < SERIALIZABLE_TRANSACTION_ATTEMPTS) continue;
       if (isRetryableTransactionError(error)) return 'unavailable';

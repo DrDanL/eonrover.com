@@ -20,6 +20,9 @@ export const deployArrivalQueue = new Queue('deploy-arrival-queue', { connection
 // Canonical colonisation wake-ups remain isolated from both the trusted deploy
 // queue and the deliberately dormant legacy fleet queue.
 export const colonizationArrivalQueue = new Queue('colonization-arrival-queue', { connection });
+// Transport wake-ups remain isolated until a dedicated processor is added in
+// a later stage; no consumer is registered here or in the worker.
+export const transportArrivalQueue = new Queue('transport-arrival-queue', { connection });
 
 export const QUEUE_NAMES = {
   build: 'build-queue',
@@ -28,4 +31,5 @@ export const QUEUE_NAMES = {
   fleet: 'fleet-queue',
   deployArrival: 'deploy-arrival-queue',
   colonizationArrival: 'colonization-arrival-queue',
+  transportArrival: 'transport-arrival-queue',
 } as const;
