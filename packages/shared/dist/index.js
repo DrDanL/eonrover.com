@@ -35,3 +35,4 @@ __exportStar(require("./colonizationMission"), exports);
 __exportStar(require("./colonizationArrivalScheduling"), exports);
 __exportStar(require("./coordinateLock"), exports);
 __exportStar(require("./colonizationArrivalCompletion"), exports);
+__exportStar(require("./espionageProbeMission"), exports);
