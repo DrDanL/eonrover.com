@@ -9,6 +9,7 @@ export * from './researchCatalogue';
 export * from './researchCompletion';
 export * from './shipyardCatalogue';
 export * from './shipyardCompletion';
+export * from './transportMission';
 export * from './deployMission';
 export * from './deployArrivalCompletion';
 export * from './deployArrivalScheduling';
