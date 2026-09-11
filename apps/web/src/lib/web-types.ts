@@ -381,6 +381,42 @@ export interface FleetColonizationsResponse {
   } | null;
 }
 
+export interface FleetTransportsResponse {
+  selectedOrigin: {
+    id: string;
+    name: string;
+    coordinates: { galaxy: number; system: number; slot: number };
+    resources: ResourceAmounts;
+    transporterCount: number;
+  };
+  transporterCapacityPerShip: number;
+  eligibleDestinations: Array<{
+    id: string;
+    name: string;
+    coordinates: { galaxy: number; system: number; slot: number };
+  }>;
+  activeTransport: {
+    id: string;
+    origin: {
+      id: string;
+      name: string;
+      coordinates: { galaxy: number; system: number; slot: number };
+    };
+    destination: {
+      id: string;
+      name: string;
+      coordinates: { galaxy: number; system: number; slot: number };
+    };
+    transporterQuantity: number;
+    remainingCargo: ResourceAmounts;
+    phase: 'OUTBOUND' | 'AWAITING_DESTINATION_CAPACITY' | 'RETURNING';
+    departedAt: string;
+    arrivesAt: string;
+    returnsAt: string | null;
+    capacityWaitMessage: string | null;
+  } | null;
+}
+
 export interface GalaxySlot {
   slot: number;
   empty: boolean;

@@ -5,18 +5,24 @@ import StatusPanel from '@/components/StatusPanel';
 import { apiGet, apiPost } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
 import { useGameCommand } from '@/lib/GameCommandContext';
-import { FleetColonizationsResponse, FleetDeploymentsResponse } from '@/lib/web-types';
+import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
 import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
 
 function duration(seconds: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} minutes`;
 }
 
+type FleetMode = 'deploy' | 'colonise' | 'transport';
+
+const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport'];
+
+const emptyCargo: ResourceAmounts = { alloy: 0, heliox: 0, aether: 0 };
+
 export default function FleetPage() {
   const { summary, loading: commandLoading, refresh: refreshCommand } = useGameCommand();
   const originPlanetId = summary?.selectedPlanetId ?? null;
   const now = useTicker();
-  const [mode, setMode] = useState<'deploy' | 'colonise'>('deploy');
+  const [mode, setMode] = useState<FleetMode>('deploy');
   const load = useCallback(async (): Promise<FleetDeploymentsResponse | null> => {
     if (!originPlanetId) return null;
     return apiGet<FleetDeploymentsResponse>(`/api/fleet/deployments?originPlanetId=${encodeURIComponent(originPlanetId)}`);
@@ -32,6 +38,16 @@ export default function FleetPage() {
     error: colonizationError,
     reload: reloadColonization,
   } = useApiData(loadColonization);
+  const loadTransport = useCallback(async (): Promise<FleetTransportsResponse | null> => {
+    if (!originPlanetId || mode !== 'transport') return null;
+    return apiGet<FleetTransportsResponse>(`/api/fleet/transports?originPlanetId=${encodeURIComponent(originPlanetId)}`);
+  }, [originPlanetId, mode]);
+  const {
+    data: transportData,
+    loading: transportLoading,
+    error: transportError,
+    reload: reloadTransport,
+  } = useApiData(loadTransport);
   const [destinationPlanetId, setDestinationPlanetId] = useState('');
   const [speed, setSpeed] = useState<number | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -39,12 +55,19 @@ export default function FleetPage() {
   const [targetSlot, setTargetSlot] = useState<number | null>(null);
   const [colonizationConfirmation, setColonizationConfirmation] = useState(false);
   const [colonizationSubmitting, setColonizationSubmitting] = useState(false);
+  const [transportDestinationPlanetId, setTransportDestinationPlanetId] = useState('');
+  const [transporterQuantity, setTransporterQuantity] = useState(1);
+  const [transportCargo, setTransportCargo] = useState<ResourceAmounts>(emptyCargo);
+  const [transportConfirmation, setTransportConfirmation] = useState(false);
+  const [transportSubmitting, setTransportSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const expiryRefresh = useRef<string | null>(null);
   const colonizationExpiryRefresh = useRef<string | null>(null);
+  const transportExpiryRefresh = useRef<string | null>(null);
   const active = data?.activeDeployment ?? null;
   const activeColonization = colonizationData?.activeColonization ?? null;
+  const activeTransport = transportData?.activeTransport ?? null;
   const ships = data?.selectedOrigin.ships ?? [];
 
   useEffect(() => {
@@ -53,10 +76,15 @@ export default function FleetPage() {
     setQuantities({});
     setTargetSlot(null);
     setColonizationConfirmation(false);
+    setTransportDestinationPlanetId('');
+    setTransporterQuantity(1);
+    setTransportCargo(emptyCargo);
+    setTransportConfirmation(false);
     setActionError(null);
     setActionSuccess(null);
     expiryRefresh.current = null;
     colonizationExpiryRefresh.current = null;
+    transportExpiryRefresh.current = null;
   }, [originPlanetId]);
 
   useEffect(() => {
@@ -87,6 +115,28 @@ export default function FleetPage() {
     refreshCommand();
   }, [activeColonization, now, reloadColonization, refreshCommand]);
 
+  useEffect(() => {
+    if (!activeTransport || activeTransport.phase === 'AWAITING_DESTINATION_CAPACITY') {
+      if (!activeTransport) transportExpiryRefresh.current = null;
+      return;
+    }
+    const dueAt = activeTransport.phase === 'RETURNING' ? activeTransport.returnsAt : activeTransport.arrivesAt;
+    const refreshKey = `${activeTransport.id}:${activeTransport.phase}:${dueAt ?? ''}`;
+    if (!dueAt || now < Date.parse(dueAt) || transportExpiryRefresh.current === refreshKey) return;
+    transportExpiryRefresh.current = refreshKey;
+    void reloadTransport();
+    refreshCommand();
+  }, [activeTransport, now, reloadTransport, refreshCommand]);
+
+  useEffect(() => {
+    if (mode !== 'transport' || activeTransport?.phase !== 'AWAITING_DESTINATION_CAPACITY') return;
+    const interval = window.setInterval(() => {
+      void reloadTransport();
+      refreshCommand();
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [activeTransport?.phase, mode, reloadTransport, refreshCommand]);
+
   const selectedShips = useMemo(() => Object.fromEntries(
     ships.flatMap((ship) => {
       const count = Math.max(0, Math.min(ship.count, Math.floor(quantities[ship.key] ?? 0)));
@@ -98,6 +148,17 @@ export default function FleetPage() {
     && speed !== null
     && Object.keys(selectedShips).length > 0
     && !submitting;
+  const transportCargoTotal = transportCargo.alloy + transportCargo.heliox + transportCargo.aether;
+  const validTransportRequest = Number.isSafeInteger(transporterQuantity)
+    && transporterQuantity >= 1
+    && transporterQuantity <= 100
+    && Object.values(transportCargo).every((amount) => Number.isSafeInteger(amount) && amount >= 0)
+    && Number.isSafeInteger(transportCargoTotal)
+    && transportCargoTotal > 0;
+  const canReviewTransport = !activeTransport
+    && Boolean(transportDestinationPlanetId)
+    && validTransportRequest
+    && !transportSubmitting;
 
   function setQuantity(key: string, maximum: number, value: number) {
     const safe = Number.isFinite(value) ? Math.floor(value) : 0;
@@ -147,17 +208,50 @@ export default function FleetPage() {
     }
   }
 
-  function changeMode(nextMode: 'deploy' | 'colonise') {
+  function setCargoResource(resource: keyof ResourceAmounts, value: number) {
+    setTransportCargo((current) => ({ ...current, [resource]: value }));
+    setTransportConfirmation(false);
+  }
+
+  async function launchTransport() {
+    if (!originPlanetId || !transportDestinationPlanetId || activeTransport || !transportConfirmation || !validTransportRequest) return;
+    setTransportSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await apiPost('/api/fleet/transports', {
+        originPlanetId,
+        destinationPlanetId: transportDestinationPlanetId,
+        transporterQuantity,
+        cargo: transportCargo,
+      });
+      setTransportConfirmation(false);
+      await reloadTransport();
+      refreshCommand();
+      setActionSuccess('Transport accepted. The server-confirmed transport state is now shown below.');
+    } catch (failure) {
+      setActionError(getErrorMessage(failure));
+    } finally {
+      setTransportSubmitting(false);
+    }
+  }
+
+  function changeMode(nextMode: FleetMode) {
     setMode(nextMode);
     setActionError(null);
     setActionSuccess(null);
     setColonizationConfirmation(false);
+    setTransportConfirmation(false);
   }
 
   function handleModeKey(event: KeyboardEvent<HTMLButtonElement>) {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const nextMode = event.key === 'Home' || event.key === 'ArrowLeft' ? 'deploy' : 'colonise';
+    const currentIndex = fleetModes.indexOf(mode);
+    const nextIndex = event.key === 'Home' ? 0
+      : event.key === 'End' ? fleetModes.length - 1
+        : (currentIndex + (event.key === 'ArrowLeft' ? -1 : 1) + fleetModes.length) % fleetModes.length;
+    const nextMode = fleetModes[nextIndex];
     changeMode(nextMode);
     document.getElementById(`fleet-mode-${nextMode}`)?.focus();
   }
@@ -166,21 +260,26 @@ export default function FleetPage() {
     <section className="stack">
       <div className="panel stack">
         <h1 style={{ margin: 0 }}>Fleet command</h1>
-        <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>
-          {mode === 'deploy'
-            ? 'Send ships between your own planets. Cargo, recall and all cross-player missions are not available yet.'
-            : 'Found a new world in this system. Cargo, recall and all cross-player missions are not available yet.'}
-        </p>
-        <div className="button-row" role="tablist" aria-label="Fleet command mode">
-          <button id="fleet-mode-deploy" type="button" role="tab" aria-selected={mode === 'deploy'} aria-controls="fleet-mode-panel" tabIndex={mode === 'deploy' ? 0 : -1} onClick={() => changeMode('deploy')} onKeyDown={handleModeKey}>Deploy</button>
-          <button id="fleet-mode-colonise" type="button" role="tab" aria-selected={mode === 'colonise'} aria-controls="fleet-mode-panel" tabIndex={mode === 'colonise' ? 0 : -1} onClick={() => changeMode('colonise')} onKeyDown={handleModeKey}>Colonise</button>
-        </div>
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>
+            {mode === 'deploy'
+              ? 'Send ships between your own planets. Cargo, recall and all cross-player missions are not available yet.'
+              : mode === 'colonise'
+                ? 'Found a new world in this system. Cargo, recall and all cross-player missions are not available yet.'
+                : 'Move resources between your own planets. Cargo is delivered only when the destination can hold it, and Transporters return automatically.'}
+          </p>
+          <div className="button-row" role="tablist" aria-label="Fleet command mode">
+            <button id="fleet-mode-deploy" type="button" role="tab" aria-selected={mode === 'deploy'} aria-controls="fleet-mode-panel" tabIndex={mode === 'deploy' ? 0 : -1} onClick={() => changeMode('deploy')} onKeyDown={handleModeKey}>Deploy</button>
+            <button id="fleet-mode-colonise" type="button" role="tab" aria-selected={mode === 'colonise'} aria-controls="fleet-mode-panel" tabIndex={mode === 'colonise' ? 0 : -1} onClick={() => changeMode('colonise')} onKeyDown={handleModeKey}>Colonise</button>
+            <button id="fleet-mode-transport" type="button" role="tab" aria-selected={mode === 'transport'} aria-controls="fleet-mode-panel" tabIndex={mode === 'transport' ? 0 : -1} onClick={() => changeMode('transport')} onKeyDown={handleModeKey}>Transport</button>
+          </div>
       </div>
       {commandLoading && !originPlanetId ? <StatusPanel message="Loading selected planet..." /> : null}
       {mode === 'deploy' && loading && !data ? <StatusPanel message="Loading authoritative deployment state..." /> : null}
       {mode === 'deploy' && error && !data ? <StatusPanel tone="error" title="Fleet deployment unavailable" message={error} /> : null}
       {mode === 'colonise' && colonizationLoading && !colonizationData ? <StatusPanel message="Loading authoritative colonisation state..." /> : null}
       {mode === 'colonise' && colonizationError && !colonizationData ? <StatusPanel tone="error" title="Colonisation unavailable" message={colonizationError} /> : null}
+      {mode === 'transport' && transportLoading && !transportData ? <StatusPanel message="Loading authoritative transport state..." /> : null}
+      {mode === 'transport' && transportError && !transportData ? <StatusPanel tone="error" title="Transport unavailable" message={transportError} /> : null}
       {actionError ? <div className="alert alert-error" role="alert">{actionError}</div> : null}
       {actionSuccess ? <p className="alert" role="status">{actionSuccess}</p> : null}
       {!commandLoading && !originPlanetId ? <StatusPanel title="No selected planet" message="Select an owned planet before preparing a deployment." /> : null}
@@ -279,6 +378,77 @@ export default function FleetPage() {
             </div>
           </div>}
         </div>}
+      </div> : null}
+      {mode === 'transport' && transportData ? <div id="fleet-mode-panel" role="tabpanel" aria-labelledby="fleet-mode-transport" className="stack">
+        <div className="panel stack" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Selected origin</h2>
+          <p style={{ margin: 0 }}><strong>{transportData.selectedOrigin.name}</strong> {formatCoords(transportData.selectedOrigin.coordinates)}</p>
+          <dl className="research-details">
+            <div><dt>Alloy</dt><dd>{formatNumber(transportData.selectedOrigin.resources.alloy)}</dd></div>
+            <div><dt>Heliox</dt><dd>{formatNumber(transportData.selectedOrigin.resources.heliox)}</dd></div>
+            <div><dt>Aether</dt><dd>{formatNumber(transportData.selectedOrigin.resources.aether)}</dd></div>
+            <div><dt>Transporters</dt><dd>{formatNumber(transportData.selectedOrigin.transporterCount)}</dd></div>
+            <div><dt>Capacity per Transporter</dt><dd>{formatNumber(transportData.transporterCapacityPerShip)}</dd></div>
+          </dl>
+        </div>
+
+        {activeTransport ? <div className="panel stack" role="status" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Transport in progress</h2>
+          <p style={{ margin: 0 }}><strong>{activeTransport.origin.name} {formatCoords(activeTransport.origin.coordinates)}</strong> → <strong>{activeTransport.destination.name} {formatCoords(activeTransport.destination.coordinates)}</strong></p>
+          <dl className="research-details">
+            <div><dt>Transporters</dt><dd>{formatNumber(activeTransport.transporterQuantity)}</dd></div>
+            <div><dt>Remaining cargo</dt><dd>Alloy {formatNumber(activeTransport.remainingCargo.alloy)}, Heliox {formatNumber(activeTransport.remainingCargo.heliox)}, Aether {formatNumber(activeTransport.remainingCargo.aether)}</dd></div>
+            <div><dt>Phase</dt><dd>{enumLabel(activeTransport.phase)}</dd></div>
+            <div><dt>Departed</dt><dd>{formatDateTime(activeTransport.departedAt)}</dd></div>
+            <div><dt>Arrival</dt><dd>{formatDateTime(activeTransport.arrivesAt)}</dd></div>
+            {activeTransport.returnsAt ? <div><dt>Return</dt><dd>{formatDateTime(activeTransport.returnsAt)}</dd></div> : null}
+          </dl>
+          {activeTransport.phase === 'AWAITING_DESTINATION_CAPACITY' ? <>
+            <p className="alert" style={{ margin: 0 }}>{activeTransport.capacityWaitMessage ?? 'The destination needs enough storage capacity before the full cargo can be delivered. No cargo has been lost.'}</p>
+            <div className="button-row">
+              <button type="button" onClick={() => { void reloadTransport(); refreshCommand(); }} disabled={transportLoading}>Refresh transport status</button>
+            </div>
+            <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>The command checks again periodically while the destination capacity changes.</p>
+          </> : (() => {
+            const nextEventAt = activeTransport.phase === 'RETURNING' ? activeTransport.returnsAt : activeTransport.arrivesAt;
+            return <p style={{ margin: 0 }}>{!nextEventAt || now >= Date.parse(nextEventAt) ? 'Confirming transport state with the server…' : `${formatRelativeCountdown(nextEventAt, now)} until the next server-confirmed transport event`}</p>;
+          })()}
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>A new transport cannot launch from this origin until this mission completes. Recall and cancellation are not available in this version.</p>
+        </div> : transportData.eligibleDestinations.length === 0 ? <StatusPanel title="Another owned planet required" message="Transport is available only between your own planets. Establish or acquire another owned planet before sending resources." /> : <form className="panel stack" onSubmit={(event) => { event.preventDefault(); if (canReviewTransport) setTransportConfirmation(true); }}>
+          <h2 style={{ margin: 0 }}>Prepare transport</h2>
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>The server confirms capacity, fuel, timing and availability when you launch. Cargo may include Heliox; round-trip fuel is reserved separately by command.</p>
+          {transportData.selectedOrigin.transporterCount < 1 ? <p className="alert alert-error" role="status">At least one Transporter is required before this origin can send cargo.</p> : null}
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <label htmlFor="transport-destination">Destination
+              <select id="transport-destination" value={transportDestinationPlanetId} onChange={(event) => { setTransportDestinationPlanetId(event.target.value); setTransportConfirmation(false); }} disabled={transportSubmitting || transportData.selectedOrigin.transporterCount < 1} required>
+                <option value="">Select an owned destination</option>
+                {transportData.eligibleDestinations.map((destination) => <option key={destination.id} value={destination.id}>{destination.name} {formatCoords(destination.coordinates)}</option>)}
+              </select>
+            </label>
+            <label htmlFor="transport-quantity">Transporters to send
+              <input id="transport-quantity" type="number" min="1" max="100" step="1" inputMode="numeric" value={transporterQuantity} onChange={(event) => { setTransporterQuantity(Number(event.target.value)); setTransportConfirmation(false); }} disabled={transportSubmitting || transportData.selectedOrigin.transporterCount < 1} aria-describedby="transport-form-help" required />
+            </label>
+          </div>
+          <fieldset className="stack" disabled={transportSubmitting || transportData.selectedOrigin.transporterCount < 1}>
+            <legend>Cargo to send</legend>
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+              {(['alloy', 'heliox', 'aether'] as const).map((resource) => <label key={resource} htmlFor={`transport-cargo-${resource}`}>{enumLabel(resource)}
+                <input id={`transport-cargo-${resource}`} type="number" min="0" step="1" inputMode="numeric" value={transportCargo[resource]} onChange={(event) => setCargoResource(resource, Number(event.target.value))} aria-describedby="transport-form-help" required />
+              </label>)}
+            </div>
+          </fieldset>
+          <p id="transport-form-help" style={{ margin: 0, color: 'var(--color-text-muted)' }}>Choose an owned destination, a whole number of Transporters from 1 to 100, and at least one whole cargo unit. The server validates all affordability and capacity rules.</p>
+          {!validTransportRequest ? <p className="alert alert-error" role="status">Enter whole, non-negative cargo amounts with at least one cargo unit, and a Transporter quantity from 1 to 100.</p> : null}
+          {!transportConfirmation ? <button type="submit" className="btn btn-primary" disabled={!canReviewTransport}>{transportSubmitting ? 'Submitting transport…' : 'Review transport'}</button> : <div className="panel stack" role="status" aria-live="polite">
+            <h3 style={{ margin: 0 }}>Confirm transport</h3>
+            <p style={{ margin: 0 }}>Send {formatNumber(transporterQuantity)} Transporter{transporterQuantity === 1 ? '' : 's'} from {transportData.selectedOrigin.name} to {transportData.eligibleDestinations.find((destination) => destination.id === transportDestinationPlanetId)?.name ?? 'the selected destination'} with Alloy {formatNumber(transportCargo.alloy)}, Heliox {formatNumber(transportCargo.heliox)}, and Aether {formatNumber(transportCargo.aether)}.</p>
+            <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Transport travels at the server-controlled speed. Cargo is delivered only when the destination can hold it, Transporters return automatically after delivery, and there is no recall or cancellation in this version.</p>
+            <div className="button-row">
+              <button type="button" onClick={() => { setTransportConfirmation(false); void reloadTransport(); refreshCommand(); }} disabled={transportSubmitting}>Change transport</button>
+              <button type="button" className="btn btn-primary" onClick={() => void launchTransport()} disabled={transportSubmitting}>{transportSubmitting ? 'Submitting transport…' : 'Confirm transport'}</button>
+            </div>
+          </div>}
+        </form>}
       </div> : null}
     </section>
   );
