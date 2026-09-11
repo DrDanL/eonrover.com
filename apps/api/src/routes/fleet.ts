@@ -1,5 +1,5 @@
 import { FleetMission, MissionStatus, MissionType } from '@prisma/client';
-import { canonicalDeployShips } from '@eonrover/shared';
+import { canonicalDeployShips, ResourceAmounts, SHIPS } from '@eonrover/shared';
 import { RequestHandler, Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
@@ -10,6 +10,8 @@ import { DeployLaunchError, launchOwnedPlanetDeploy } from '../services/deployLa
 import { completeCanonicalColonization } from '../services/colonizationCompletionService';
 import { ColonizationLaunchError, launchCanonicalColonization } from '../services/colonizationLaunchService';
 import { syncPlanetResources } from '../services/planetService';
+import { settleCanonicalTransport } from '../services/transportCompletionService';
+import { TransportLaunchError, launchCanonicalTransport } from '../services/transportLaunchService';
 
 const router = Router();
 router.use(requireAuth);
@@ -25,6 +27,18 @@ const colonizationQuerySchema = z.object({ originPlanetId: z.string().uuid() });
 const colonizationLaunchSchema = z.object({
   originPlanetId: z.string().uuid(),
   targetSlot: z.number().int(),
+}).strict();
+const transportQuerySchema = z.object({ originPlanetId: z.string().uuid() });
+const safeNonNegativeInteger = z.number().int().nonnegative().refine(Number.isSafeInteger);
+const transportLaunchSchema = z.object({
+  originPlanetId: z.string().uuid(),
+  destinationPlanetId: z.string().uuid(),
+  transporterQuantity: z.number().int().min(1).max(100).refine(Number.isSafeInteger),
+  cargo: z.object({
+    alloy: safeNonNegativeInteger,
+    heliox: safeNonNegativeInteger,
+    aether: safeNonNegativeInteger,
+  }).strict(),
 }).strict();
 
 // Deploy planning accepts integer percentages from 10 through 100. These are
@@ -70,12 +84,55 @@ type SafeColonization = {
   durationSeconds: number;
 };
 
+type SafeTransportPlanet = {
+  id: string;
+  name: string;
+  coordinates: { galaxy: number; system: number; slot: number };
+};
+
+type SafeTransport = {
+  id: string;
+  origin: SafeTransportPlanet;
+  destination: SafeTransportPlanet;
+  transporterQuantity: number;
+  remainingCargo: ResourceAmounts;
+  phase: 'OUTBOUND' | 'AWAITING_DESTINATION_CAPACITY' | 'RETURNING';
+  departedAt: Date;
+  arrivesAt: Date;
+  returnsAt: Date | null;
+  capacityWaitMessage: string | null;
+};
+
+type TransportForPresentation = Pick<FleetMission,
+  'id' | 'missionType' | 'status' | 'departedAt' | 'arrivesAt' | 'returnsAt'
+  | 'transportOriginId' | 'transportDestinationId' | 'transportShips' | 'transportCargo'
+  | 'transportRemainingCargo' | 'transportCapacity' | 'transportOutboundFuelHeliox'
+  | 'transportReturnFuelHeliox' | 'transportTotalReservedFuelHeliox'
+  | 'transportOutboundDurationSeconds' | 'transportReturnDurationSeconds' | 'transportPhase'
+> & {
+  transportOrigin: { id: string; ownerId: string; name: string; galaxy: number; system: number; slot: number } | null;
+  transportDestination: { id: string; ownerId: string; name: string; galaxy: number; system: number; slot: number } | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isCanonicalColonyManifest(value: unknown): boolean {
   return isRecord(value) && Object.keys(value).length === 1 && value.colonyShip === 1;
+}
+
+function safeResourceSnapshot(value: unknown): ResourceAmounts | null {
+  if (!isRecord(value) || Object.keys(value).length !== 3) return null;
+  const { alloy, heliox, aether } = value;
+  if (![alloy, heliox, aether].every((amount) => typeof amount === 'number' && Number.isSafeInteger(amount) && amount >= 0)) return null;
+  return { alloy: alloy as number, heliox: heliox as number, aether: aether as number };
+}
+
+function safeTransporterManifest(value: unknown): { transporter: number } | null {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || typeof value.transporter !== 'number') return null;
+  if (!Number.isSafeInteger(value.transporter) || value.transporter < 1 || value.transporter > 100) return null;
+  return { transporter: value.transporter };
 }
 
 function validColonizationSlot(value: unknown): value is number {
@@ -249,6 +306,101 @@ async function activeDeploymentForOrigin(originPlanetId: string, ownerId: string
   });
 }
 
+function transportSelect() {
+  return {
+    id: true, missionType: true, status: true, departedAt: true, arrivesAt: true, returnsAt: true,
+    transportOriginId: true, transportDestinationId: true, transportShips: true, transportCargo: true,
+    transportRemainingCargo: true, transportCapacity: true, transportOutboundFuelHeliox: true,
+    transportReturnFuelHeliox: true, transportTotalReservedFuelHeliox: true,
+    transportOutboundDurationSeconds: true, transportReturnDurationSeconds: true, transportPhase: true,
+    transportOrigin: { select: { id: true, ownerId: true, name: true, galaxy: true, system: true, slot: true } },
+    transportDestination: { select: { id: true, ownerId: true, name: true, galaxy: true, system: true, slot: true } },
+  } as const;
+}
+
+async function activeTransportForOrigin(originPlanetId: string): Promise<TransportForPresentation | null> {
+  return prisma.fleetMission.findFirst({
+    where: {
+      missionType: MissionType.TRANSPORT,
+      transportOriginId: originPlanetId,
+      transportDestinationId: { not: null },
+      status: { in: [MissionStatus.OUTBOUND, MissionStatus.RETURNING] },
+      transportPhase: { in: ['OUTBOUND', 'AWAITING_DESTINATION_CAPACITY', 'RETURNING'] },
+    },
+    orderBy: [{ arrivesAt: 'asc' }, { id: 'asc' }],
+    select: transportSelect(),
+  });
+}
+
+function safeTransportPlanet(planet: NonNullable<TransportForPresentation['transportOrigin']>): SafeTransportPlanet {
+  return {
+    id: planet.id,
+    name: planet.name,
+    coordinates: { galaxy: planet.galaxy, system: planet.system, slot: planet.slot },
+  };
+}
+
+function presentTransport(mission: TransportForPresentation, ownerId: string, originPlanetId: string): SafeTransport | null {
+  const origin = mission.transportOrigin;
+  const destination = mission.transportDestination;
+  const ships = safeTransporterManifest(mission.transportShips);
+  const originalCargo = safeResourceSnapshot(mission.transportCargo);
+  const remainingCargo = safeResourceSnapshot(mission.transportRemainingCargo);
+  const phase = mission.transportPhase;
+  const capacity = mission.transportCapacity;
+  const outboundFuel = mission.transportOutboundFuelHeliox;
+  const returnFuel = mission.transportReturnFuelHeliox;
+  const totalFuel = mission.transportTotalReservedFuelHeliox;
+  const outboundDuration = mission.transportOutboundDurationSeconds;
+  const returnDuration = mission.transportReturnDurationSeconds;
+  if (
+    mission.missionType !== MissionType.TRANSPORT
+    || !origin || !destination
+    || origin.id !== originPlanetId
+    || mission.transportOriginId !== origin.id
+    || mission.transportDestinationId !== destination.id
+    || origin.ownerId !== ownerId || destination.ownerId !== ownerId
+    || origin.id === destination.id
+    || mission.status === MissionStatus.OUTBOUND && !['OUTBOUND', 'AWAITING_DESTINATION_CAPACITY'].includes(phase ?? '')
+    || mission.status === MissionStatus.RETURNING && phase !== 'RETURNING'
+    || (phase !== 'OUTBOUND' && phase !== 'AWAITING_DESTINATION_CAPACITY' && phase !== 'RETURNING')
+    || !ships || !originalCargo || !remainingCargo
+    || typeof capacity !== 'number' || !Number.isSafeInteger(capacity) || capacity < 0
+    || typeof outboundFuel !== 'number' || !Number.isSafeInteger(outboundFuel) || outboundFuel < 0
+    || typeof returnFuel !== 'number' || !Number.isSafeInteger(returnFuel) || returnFuel < 0
+    || typeof totalFuel !== 'number' || !Number.isSafeInteger(totalFuel) || totalFuel < 0
+    || typeof outboundDuration !== 'number' || !Number.isSafeInteger(outboundDuration) || outboundDuration <= 0
+    || typeof returnDuration !== 'number' || !Number.isSafeInteger(returnDuration) || returnDuration <= 0
+    || totalFuel !== outboundFuel + returnFuel
+    || capacity < originalCargo.alloy + originalCargo.heliox + originalCargo.aether
+    || !Number.isFinite(mission.departedAt.getTime()) || !Number.isFinite(mission.arrivesAt.getTime())
+    || (mission.returnsAt !== null && !Number.isFinite(mission.returnsAt.getTime()))
+    || phase === 'RETURNING' && (mission.returnsAt === null || remainingCargo.alloy !== 0 || remainingCargo.heliox !== 0 || remainingCargo.aether !== 0)
+    || phase !== 'RETURNING' && (remainingCargo.alloy !== originalCargo.alloy || remainingCargo.heliox !== originalCargo.heliox || remainingCargo.aether !== originalCargo.aether)
+  ) return null;
+
+  return {
+    id: mission.id,
+    origin: safeTransportPlanet(origin),
+    destination: safeTransportPlanet(destination),
+    transporterQuantity: ships.transporter,
+    remainingCargo,
+    phase,
+    departedAt: mission.departedAt,
+    arrivesAt: mission.arrivesAt,
+    returnsAt: mission.returnsAt,
+    capacityWaitMessage: phase === 'AWAITING_DESTINATION_CAPACITY'
+      ? 'Waiting for destination storage capacity before cargo can be delivered.'
+      : null,
+  };
+}
+
+async function settleTransportForOrigin(originPlanetId: string, currentTime: Date): Promise<boolean> {
+  const active = await activeTransportForOrigin(originPlanetId);
+  if (!active) return true;
+  return (await settleCanonicalTransport(active.id, currentTime)) !== 'unavailable';
+}
+
 function sendLaunchError(res: Parameters<RequestHandler>[1], error: DeployLaunchError): void {
   switch (error.code) {
     case 'ORIGIN_NOT_OWNED':
@@ -356,6 +508,99 @@ router.post('/deployments', asyncHandler(async (req, res) => {
     });
   } catch (error) {
     if (error instanceof DeployLaunchError) { sendLaunchError(res, error); return; }
+    throw error;
+  }
+}));
+
+function sendTransportLaunchError(res: Parameters<RequestHandler>[1], error: TransportLaunchError): void {
+  switch (error.code) {
+    case 'ORIGIN_NOT_OWNED':
+    case 'DESTINATION_NOT_OWNED':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
+      return;
+    case 'IDENTICAL_PLANETS':
+    case 'INVALID_TRANSPORT_INPUT':
+      sendError(res, 400, ERROR_CODES.BAD_REQUEST, error.message);
+      return;
+    case 'INSUFFICIENT_TRANSPORTERS':
+    case 'TRANSPORT_IN_PROGRESS':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'INSUFFICIENT_RESOURCES':
+    case 'INSUFFICIENT_HELIOX':
+      sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, error.message);
+      return;
+    case 'TRANSPORT_UNAVAILABLE':
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message);
+      return;
+  }
+}
+
+router.get('/transports', asyncHandler(async (req, res) => {
+  const parsed = transportQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  const origin = await prisma.planet.findUnique({ where: { id: parsed.data.originPlanetId } });
+  if (!origin || origin.ownerId !== req.user!.id) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+
+  const now = new Date();
+  if (!await settleTransportForOrigin(origin.id, now)) {
+    sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Transport state could not be refreshed. Please try again.');
+    return;
+  }
+  const [{ planet: settledOrigin }, transporters, destinations, active] = await Promise.all([
+    syncPlanetResources(origin.id, now),
+    prisma.ship.findUnique({
+      where: { planetId_key: { planetId: origin.id, key: 'transporter' } },
+      select: { count: true },
+    }),
+    prisma.planet.findMany({
+      where: { ownerId: req.user!.id, id: { not: origin.id } },
+      select: { id: true, name: true, galaxy: true, system: true, slot: true },
+      orderBy: [{ galaxy: 'asc' }, { system: 'asc' }, { slot: 'asc' }, { id: 'asc' }],
+    }),
+    activeTransportForOrigin(origin.id),
+  ]);
+
+  res.json({
+    selectedOrigin: {
+      id: settledOrigin.id,
+      name: settledOrigin.name,
+      coordinates: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+      resources: { alloy: settledOrigin.alloy, heliox: settledOrigin.heliox, aether: settledOrigin.aether },
+      transporterCount: transporters?.count ?? 0,
+    },
+    transporterCapacityPerShip: SHIPS.transporter.cargo,
+    eligibleDestinations: destinations.map((destination) => ({
+      id: destination.id,
+      name: destination.name,
+      coordinates: { galaxy: destination.galaxy, system: destination.system, slot: destination.slot },
+    })),
+    activeTransport: active ? presentTransport(active, req.user!.id, origin.id) : null,
+  });
+}));
+
+router.post('/transports', asyncHandler(async (req, res) => {
+  const parsed = transportLaunchSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  try {
+    const accepted = await launchCanonicalTransport({
+      userId: req.user!.id,
+      originPlanetId: parsed.data.originPlanetId,
+      destinationPlanetId: parsed.data.destinationPlanetId,
+      transporterQuantity: parsed.data.transporterQuantity,
+      cargo: parsed.data.cargo,
+    });
+    const active = await activeTransportForOrigin(accepted.originPlanetId);
+    const presentation = active ? presentTransport(active, req.user!.id, accepted.originPlanetId) : null;
+    // Redis dispatch is intentionally absent from this response. The accepted
+    // transaction is durable, and Stage 10B6 reconciliation repairs wake-ups.
+    if (!presentation || presentation.id !== accepted.missionId) {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Transport state could not be refreshed. Please try again.');
+      return;
+    }
+    res.status(201).json({ activeTransport: presentation });
+  } catch (error) {
+    if (error instanceof TransportLaunchError) { sendTransportLaunchError(res, error); return; }
     throw error;
   }
 }));
