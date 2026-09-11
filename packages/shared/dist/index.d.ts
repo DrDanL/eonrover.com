@@ -22,3 +22,4 @@ export * from './colonizationArrivalCompletion';
 export * from './espionageProbeMission';
 export * from './espionageDisclosure';
 export * from './espionageProbeCompletion';
+export * from './espionageProbeArrivalScheduling';

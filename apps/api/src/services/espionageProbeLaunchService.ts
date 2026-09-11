@@ -7,6 +7,10 @@ import {
 import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
+import {
+  EspionageProbeSchedulingOutcome,
+  scheduleEspionageProbeArrivalWakeup,
+} from './espionageProbeArrivalSchedulingService';
 
 const SERIALIZABLE_TRANSACTION_ATTEMPTS = 3;
 
@@ -47,6 +51,8 @@ export interface AcceptedEspionageProbeLaunch {
   arrivesAt: Date;
   returnsAt: Date;
   phase: 'OUTBOUND';
+  /** Internal-only best-effort wake-up result; PostgreSQL acceptance is final. */
+  schedulingOutcome: EspionageProbeSchedulingOutcome;
 }
 
 type Coordinates = { galaxy: number; system: number; slot: number };
@@ -122,7 +128,7 @@ export async function launchCanonicalEspionageProbe(
 
   for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
+      const accepted = await prisma.$transaction(async (tx) => {
         // Resolve only the coordinate-selected target before locks establish
         // the required sorted account → origin → target ordering. Its IDs are
         // never accepted from the caller or returned in an error.
@@ -288,6 +294,13 @@ export async function launchCanonicalEspionageProbe(
           phase: 'OUTBOUND' as const,
         };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      // The accepted reservation has committed before Redis is touched. A
+      // failed wake-up remains recoverable and never rolls it back or retries
+      // the authoritative launch transaction.
+      return {
+        ...accepted,
+        schedulingOutcome: await scheduleEspionageProbeArrivalWakeup(accepted.missionId),
+      };
     } catch (error) {
       if (error instanceof EspionageProbeLaunchError) throw error;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

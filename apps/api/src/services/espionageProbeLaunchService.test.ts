@@ -5,6 +5,7 @@ import {
   buildQueue,
   colonizationArrivalQueue,
   deployArrivalQueue,
+  espionageProbeArrivalQueue,
   fleetQueue,
   researchQueue,
   shipyardQueue,
@@ -23,7 +24,10 @@ beforeEach(() => {
   invalidateUniverseConfigCache();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const job of await espionageProbeArrivalQueue.getJobs(['waiting', 'delayed'])) {
+    await job.remove();
+  }
   invalidateUniverseConfigCache();
 });
 
@@ -139,6 +143,7 @@ async function queueCounts() {
     deployArrivalQueue.getJobCounts(),
     colonizationArrivalQueue.getJobCounts(),
     transportArrivalQueue.getJobCounts(),
+    espionageProbeArrivalQueue.getJobCounts(),
   ]);
 }
 
@@ -200,6 +205,10 @@ describe('launchCanonicalEspionageProbe', () => {
     expect(probes.count).toBe(0);
     expect(originAfter.heliox).toBe(beforeOrigin.heliox - expected.outboundFuelHeliox - expected.returnFuelHeliox);
     expect(targetAfter).toMatchObject({ alloy: beforeTarget.alloy, heliox: beforeTarget.heliox, aether: beforeTarget.aether });
+    expect(accepted.schedulingOutcome).toBe('scheduled');
+    const wakeup = await espionageProbeArrivalQueue.getJob(`espionage-probe-arrival-${accepted.missionId}`);
+    expect(wakeup).toMatchObject({ name: 'complete-espionage-probe-arrival', data: { missionId: accepted.missionId } });
+    await wakeup?.remove();
     expect(await prisma.notification.count()).toBe(0);
     expect(await prisma.combatReport.count()).toBe(0);
     expect(await prisma.espionageReport.count()).toBe(0);

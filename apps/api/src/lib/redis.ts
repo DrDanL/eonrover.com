@@ -23,6 +23,9 @@ export const colonizationArrivalQueue = new Queue('colonization-arrival-queue', 
 // Transport wake-ups remain isolated until a dedicated processor is added in
 // a later stage; no consumer is registered here or in the worker.
 export const transportArrivalQueue = new Queue('transport-arrival-queue', { connection });
+// Canonical Probe wake-ups are deliberately isolated from the dormant legacy
+// fleet queue. This stage registers no consumer for this queue.
+export const espionageProbeArrivalQueue = new Queue('espionage-probe-arrival-queue', { connection });
 
 export const QUEUE_NAMES = {
   build: 'build-queue',
@@ -32,4 +35,5 @@ export const QUEUE_NAMES = {
   deployArrival: 'deploy-arrival-queue',
   colonizationArrival: 'colonization-arrival-queue',
   transportArrival: 'transport-arrival-queue',
+  espionageProbeArrival: 'espionage-probe-arrival-queue',
 } as const;

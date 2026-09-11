@@ -3,6 +3,7 @@ import {
   settleCanonicalEspionageProbe as settlePersistedCanonicalEspionageProbe,
 } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
+import { scheduleEspionageProbeReturnWakeup } from './espionageProbeArrivalSchedulingService';
 
 export type { EspionageProbeCompletionOutcome } from '@eonrover/shared';
 
@@ -15,5 +16,7 @@ export function settleCanonicalEspionageProbe(
   missionId: string,
   currentTime = new Date(),
 ): Promise<EspionageProbeCompletionOutcome> {
-  return settlePersistedCanonicalEspionageProbe(prisma, missionId, currentTime);
+  return settlePersistedCanonicalEspionageProbe(prisma, missionId, currentTime, {
+    scheduleReturnWakeup: scheduleEspionageProbeReturnWakeup,
+  });
 }

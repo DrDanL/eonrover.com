@@ -118,12 +118,12 @@ function completedBuildingLevels(rows) {
  * provides a mission id and authoritative time boundary; legacy JSON, queued
  * payload data, and client values are intentionally not game-state inputs.
  */
-async function settleCanonicalEspionageProbe(database, missionId, currentTime = new Date()) {
+async function settleCanonicalEspionageProbe(database, missionId, currentTime = new Date(), options = {}) {
     if (!missionId || !Number.isFinite(currentTime.getTime()))
         return 'noop';
     for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
         try {
-            return await database.$transaction(async (tx) => {
+            const outcome = await database.$transaction(async (tx) => {
                 // sorted account ids → origin → target → Probe inventory → mission → report
                 const accountLocks = await tx.$queryRaw `
           SELECT account."id" AS "id"
@@ -278,6 +278,12 @@ async function settleCanonicalEspionageProbe(database, missionId, currentTime = 
                 });
                 return 'returned';
             }, { isolationLevel: 'Serializable' });
+            // Arrival state commits before Redis is touched. A wake-up failure is
+            // deliberately non-authoritative and cannot reverse report, mission, or
+            // notification state.
+            if (outcome === 'arrived')
+                await options.scheduleReturnWakeup?.(missionId, currentTime);
+            return outcome;
         }
         catch (error) {
             if (isRetryableTransactionError(error) && attempt + 1 < SERIALIZABLE_TRANSACTION_ATTEMPTS)

@@ -10,6 +10,10 @@ export interface EspionageProbeCompletionDatabase {
   $transaction<T>(callback: (transaction: any) => Promise<T>, options?: unknown): Promise<T>;
 }
 
+export interface EspionageProbeCompletionOptions {
+  scheduleReturnWakeup?: (missionId: string, currentTime: Date) => Promise<unknown>;
+}
+
 export type EspionageProbeCompletionOutcome = 'arrived' | 'returned' | 'early' | 'noop' | 'unavailable';
 
 type CanonicalProbeMission = {
@@ -149,12 +153,13 @@ export async function settleCanonicalEspionageProbe(
   database: EspionageProbeCompletionDatabase,
   missionId: string,
   currentTime = new Date(),
+  options: EspionageProbeCompletionOptions = {},
 ): Promise<EspionageProbeCompletionOutcome> {
   if (!missionId || !Number.isFinite(currentTime.getTime())) return 'noop';
 
   for (let attempt = 0; attempt < SERIALIZABLE_TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
-      return await database.$transaction(async (tx) => {
+      const outcome = await database.$transaction(async (tx) => {
         // sorted account ids → origin → target → Probe inventory → mission → report
         const accountLocks = await tx.$queryRaw<Array<{ id: string }>>`
           SELECT account."id" AS "id"
@@ -297,6 +302,11 @@ export async function settleCanonicalEspionageProbe(
         });
         return 'returned';
       }, { isolationLevel: 'Serializable' });
+      // Arrival state commits before Redis is touched. A wake-up failure is
+      // deliberately non-authoritative and cannot reverse report, mission, or
+      // notification state.
+      if (outcome === 'arrived') await options.scheduleReturnWakeup?.(missionId, currentTime);
+      return outcome;
     } catch (error) {
       if (isRetryableTransactionError(error) && attempt + 1 < SERIALIZABLE_TRANSACTION_ATTEMPTS) continue;
       if (isRetryableTransactionError(error)) return 'unavailable';
