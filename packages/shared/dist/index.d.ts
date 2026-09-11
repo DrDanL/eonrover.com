@@ -11,6 +11,7 @@ export * from './shipyardCatalogue';
 export * from './shipyardCompletion';
 export * from './transportMission';
 export * from './transportArrivalScheduling';
+export * from './transportCompletion';
 export * from './deployMission';
 export * from './deployArrivalCompletion';
 export * from './deployArrivalScheduling';

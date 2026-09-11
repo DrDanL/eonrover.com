@@ -11,6 +11,7 @@ const { processResearchJob } = require('./processors/researchProcessor') as type
 const { processShipyardJob } = require('./processors/shipyardProcessor') as typeof import('./processors/shipyardProcessor');
 const { processDeployArrivalJob } = require('./processors/deployArrivalProcessor') as typeof import('./processors/deployArrivalProcessor');
 const { processColonizationArrivalJob } = require('./processors/colonizationArrivalProcessor') as typeof import('./processors/colonizationArrivalProcessor');
+const { processTransportArrivalJob } = require('./processors/transportArrivalProcessor') as typeof import('./processors/transportArrivalProcessor');
 const { deployArrivalQueue, colonizationArrivalQueue } = require('./queues') as typeof import('./queues');
 const {
   reconcilePendingBuildingJobs,
@@ -60,6 +61,9 @@ const deployArrivalWorker = new Worker('deploy-arrival-queue', processDeployArri
 // Colonisation has no reconciler yet. This is only a deterministic wake-up
 // consumer for the canonical completion transaction.
 const colonizationArrivalWorker = new Worker('colonization-arrival-queue', processColonizationArrivalJob, { connection });
+// This is a wake-up consumer only. Lost-job recovery is intentionally deferred
+// to the following transport reconciliation stage.
+const transportArrivalWorker = new Worker('transport-arrival-queue', processTransportArrivalJob, { connection });
 
 for (const [name, worker] of [
   ['build-queue', buildWorker],
@@ -67,13 +71,14 @@ for (const [name, worker] of [
   ['shipyard-queue', shipyardWorker],
   ['deploy-arrival-queue', deployArrivalWorker],
   ['colonization-arrival-queue', colonizationArrivalWorker],
+  ['transport-arrival-queue', transportArrivalWorker],
 ] as const) {
   worker.on('completed', logCompletion(name));
   worker.on('failed', logFailure(name));
 }
 
 // eslint-disable-next-line no-console
-console.log('Eon Rover worker started, listening for build/research/shipyard/deploy-arrival/colonization-arrival events. Legacy fleet jobs are intentionally not consumed.');
+console.log('Eon Rover worker started, listening for build/research/shipyard/deploy-arrival/colonization-arrival/transport-arrival events. Legacy fleet jobs are intentionally not consumed.');
 
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
@@ -195,6 +200,7 @@ async function shutdown() {
     shipyardWorker.close(),
     deployArrivalWorker.close(),
     colonizationArrivalWorker.close(),
+    transportArrivalWorker.close(),
   ]);
   process.exit(0);
 }

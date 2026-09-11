@@ -244,10 +244,10 @@ describe('canonical transport wake-up scheduling', () => {
     expect(await prisma.planet.findUniqueOrThrow({ where: { id: failed.destination.id } })).toMatchObject({ alloy: 2_000, heliox: 1_500, aether: 1_200 });
   });
 
-  it('leaves the dedicated transport queue unconsumed and the legacy fleet queue untouched', () => {
+  it('registers only the dedicated transport queue consumer and leaves the legacy fleet queue untouched', () => {
     const root = resolve(__dirname, '../../../..');
     const workerEntry = readFileSync(resolve(root, 'apps/worker/src/index.ts'), 'utf8');
-    expect(workerEntry).not.toContain("new Worker('transport-arrival-queue'");
+    expect(workerEntry).toContain("new Worker('transport-arrival-queue', processTransportArrivalJob");
     expect(workerEntry).not.toContain("new Worker('fleet-queue'");
     expect(readFileSync(resolve(root, 'apps/api/src/routes/fleet.ts'), 'utf8')).not.toContain('transport-arrival-queue');
     expect(fleetQueue.name).toBe('fleet-queue');
