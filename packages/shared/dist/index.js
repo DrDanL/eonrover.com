@@ -30,3 +30,5 @@ __exportStar(require("./deployArrivalCompletion"), exports);
 __exportStar(require("./deployArrivalScheduling"), exports);
 __exportStar(require("./colonizationMission"), exports);
 __exportStar(require("./colonizationArrivalScheduling"), exports);
+__exportStar(require("./coordinateLock"), exports);
+__exportStar(require("./colonizationArrivalCompletion"), exports);

@@ -251,14 +251,13 @@ describe('scheduleColonizationArrivalWakeup', () => {
     expect(origin.heliox).toBe(5_000 - mission.colonizationFuelHeliox!);
   });
 
-  it('is not wired into a worker, public route, or the legacy fleet queue', () => {
+  it('is wired only to the dedicated worker, never a public route or legacy fleet queue', () => {
     const root = resolve(__dirname, '../../../..');
     expect(readFileSync(resolve(root, 'apps/api/src/services/colonizationArrivalSchedulingService.ts'), 'utf8')).not.toContain('fleetQueue');
-    for (const source of [
-      'apps/worker/src/index.ts',
-      'apps/worker/src/queues.ts',
-      'apps/api/src/routes/fleet.ts',
-    ]) {
+    const workerEntry = readFileSync(resolve(root, 'apps/worker/src/index.ts'), 'utf8');
+    expect(workerEntry).toContain("new Worker('colonization-arrival-queue', processColonizationArrivalJob");
+    expect(workerEntry).not.toContain("new Worker('fleet-queue'");
+    for (const source of ['apps/api/src/routes/fleet.ts']) {
       expect(readFileSync(resolve(root, source), 'utf8')).not.toContain('colonization-arrival-queue');
     }
   });
