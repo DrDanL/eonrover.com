@@ -7,6 +7,8 @@ import { requireAuth } from '../middleware/auth';
 import { asyncHandler, ERROR_CODES, sendError, sendValidationError } from '../middleware/error';
 import { completeOwnedPlanetDeployArrival } from '../services/deployArrivalCompletionService';
 import { DeployLaunchError, launchOwnedPlanetDeploy } from '../services/deployLaunchService';
+import { completeCanonicalColonization } from '../services/colonizationCompletionService';
+import { ColonizationLaunchError, launchCanonicalColonization } from '../services/colonizationLaunchService';
 import { syncPlanetResources } from '../services/planetService';
 
 const router = Router();
@@ -18,6 +20,11 @@ const deploymentLaunchSchema = z.object({
   destinationPlanetId: z.string().uuid(),
   speed: z.number().int(),
   ships: z.record(z.unknown()),
+}).strict();
+const colonizationQuerySchema = z.object({ originPlanetId: z.string().uuid() });
+const colonizationLaunchSchema = z.object({
+  originPlanetId: z.string().uuid(),
+  targetSlot: z.number().int(),
 }).strict();
 
 // Deploy planning accepts integer percentages from 10 through 100. These are
@@ -43,6 +50,139 @@ type DeploymentForPresentation = Pick<FleetMission,
 > & {
   deployDestination: { id: string; ownerId: string; name: string; galaxy: number; system: number; slot: number } | null;
 };
+
+type ColonizationForPresentation = Pick<FleetMission,
+  'originId' | 'targetGalaxy' | 'targetSystem' | 'targetSlot' | 'missionType' | 'status'
+  | 'departedAt' | 'arrivesAt' | 'speedPercent' | 'colonizationAccountId' | 'colonizationTargetGalaxy'
+  | 'colonizationTargetSystem' | 'colonizationTargetSlot' | 'colonizationShips'
+  | 'colonizationFuelHeliox' | 'colonizationDurationSeconds' | 'colonizationCharacteristics'
+  | 'colonizationStarterState' | 'createdPlanetId'
+> & {
+  origin: { id: string; ownerId: string; name: string; galaxy: number; system: number; slot: number } | null;
+};
+
+type SafeColonization = {
+  origin: { id: string; name: string; coordinates: { galaxy: number; system: number; slot: number } };
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  status: 'OUTBOUND';
+  departedAt: Date;
+  arrivesAt: Date;
+  durationSeconds: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCanonicalColonyManifest(value: unknown): boolean {
+  return isRecord(value) && Object.keys(value).length === 1 && value.colonyShip === 1;
+}
+
+function validColonizationSlot(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= 12;
+}
+
+function presentColonization(mission: ColonizationForPresentation, ownerId: string): SafeColonization | null {
+  const origin = mission.origin;
+  const durationSeconds = mission.colonizationDurationSeconds;
+  const fuelHeliox = mission.colonizationFuelHeliox;
+  const targetSlot = mission.colonizationTargetSlot;
+  if (
+    mission.missionType !== MissionType.COLONIZE
+    || mission.status !== MissionStatus.OUTBOUND
+    || !origin
+    || origin.ownerId !== ownerId
+    || mission.colonizationAccountId !== ownerId
+    || mission.originId !== origin.id
+    || !validColonizationSlot(targetSlot)
+    || mission.colonizationTargetGalaxy !== origin.galaxy
+    || mission.colonizationTargetSystem !== origin.system
+    || mission.colonizationTargetSlot === origin.slot
+    || mission.targetGalaxy !== mission.colonizationTargetGalaxy
+    || mission.targetSystem !== mission.colonizationTargetSystem
+    || mission.targetSlot !== mission.colonizationTargetSlot
+    || mission.speedPercent !== 100
+    || !isCanonicalColonyManifest(mission.colonizationShips)
+    || typeof fuelHeliox !== 'number'
+    || !Number.isInteger(fuelHeliox)
+    || fuelHeliox < 0
+    || typeof durationSeconds !== 'number'
+    || !Number.isInteger(durationSeconds)
+    || durationSeconds <= 0
+    || !isRecord(mission.colonizationCharacteristics)
+    || !isRecord(mission.colonizationStarterState)
+    || mission.createdPlanetId !== null
+    || !Number.isFinite(mission.departedAt.getTime())
+    || !Number.isFinite(mission.arrivesAt.getTime())
+    || mission.arrivesAt.getTime() - mission.departedAt.getTime() !== durationSeconds * 1_000
+  ) return null;
+
+  return {
+    origin: {
+      id: origin.id,
+      name: origin.name,
+      coordinates: { galaxy: origin.galaxy, system: origin.system, slot: origin.slot },
+    },
+    target: {
+      coordinates: {
+        galaxy: origin.galaxy,
+        system: origin.system,
+        slot: targetSlot,
+      },
+    },
+    status: MissionStatus.OUTBOUND,
+    departedAt: mission.departedAt,
+    arrivesAt: mission.arrivesAt,
+    durationSeconds,
+  };
+}
+
+function colonizationSelect() {
+  return {
+    originId: true, targetGalaxy: true, targetSystem: true, targetSlot: true, speedPercent: true,
+    missionType: true, status: true, departedAt: true, arrivesAt: true,
+    colonizationAccountId: true, colonizationTargetGalaxy: true, colonizationTargetSystem: true,
+    colonizationTargetSlot: true, colonizationShips: true, colonizationFuelHeliox: true,
+    colonizationDurationSeconds: true, colonizationCharacteristics: true,
+    colonizationStarterState: true, createdPlanetId: true,
+    origin: { select: { id: true, ownerId: true, name: true, galaxy: true, system: true, slot: true } },
+  } as const;
+}
+
+async function activeColonizationForAccount(accountId: string): Promise<ColonizationForPresentation | null> {
+  return prisma.fleetMission.findFirst({
+    where: {
+      missionType: MissionType.COLONIZE,
+      status: MissionStatus.OUTBOUND,
+      colonizationAccountId: accountId,
+      colonizationTargetGalaxy: { not: null },
+      colonizationTargetSystem: { not: null },
+      colonizationTargetSlot: { not: null },
+    },
+    orderBy: [{ arrivesAt: 'asc' }, { id: 'asc' }],
+    select: colonizationSelect(),
+  });
+}
+
+async function settleDueColonizationsForAccount(accountId: string, now: Date): Promise<boolean> {
+  const dueMissions = await prisma.fleetMission.findMany({
+    where: {
+      missionType: MissionType.COLONIZE,
+      status: MissionStatus.OUTBOUND,
+      colonizationAccountId: accountId,
+      colonizationTargetGalaxy: { not: null },
+      colonizationTargetSystem: { not: null },
+      colonizationTargetSlot: { not: null },
+      arrivesAt: { lte: now },
+    },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+  for (const mission of dueMissions) {
+    if (await completeCanonicalColonization(mission.id, now) === 'unavailable') return false;
+  }
+  return true;
+}
 
 function presentDeployment(mission: DeploymentForPresentation, ownerId: string, originPlanetId: string): SafeDeployment | null {
   const fuelHeliox = mission.deployFuelHeliox;
@@ -216,6 +356,125 @@ router.post('/deployments', asyncHandler(async (req, res) => {
     });
   } catch (error) {
     if (error instanceof DeployLaunchError) { sendLaunchError(res, error); return; }
+    throw error;
+  }
+}));
+
+function sendColonizationLaunchError(res: Parameters<RequestHandler>[1], error: ColonizationLaunchError): void {
+  switch (error.code) {
+    case 'ORIGIN_NOT_OWNED':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
+      return;
+    case 'INVALID_TARGET':
+      sendError(res, 400, ERROR_CODES.BAD_REQUEST, error.message);
+      return;
+    case 'TARGET_OCCUPIED':
+    case 'TARGET_RESERVED':
+    case 'PLANET_LIMIT_REACHED':
+    case 'COLONIZATION_IN_PROGRESS':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'INSUFFICIENT_COLONY_SHIPS':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'INSUFFICIENT_HELIOX':
+      sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, error.message);
+      return;
+    case 'COLONIZATION_UNAVAILABLE':
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message);
+      return;
+  }
+}
+
+router.get('/colonizations', asyncHandler(async (req, res) => {
+  const parsed = colonizationQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  const origin = await prisma.planet.findUnique({ where: { id: parsed.data.originPlanetId } });
+  if (!origin || origin.ownerId !== req.user!.id) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+
+  const now = new Date();
+  if (!await settleDueColonizationsForAccount(req.user!.id, now)) {
+    sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Colonisation state could not be refreshed. Please try again.');
+    return;
+  }
+
+  const [{ planet: settledOrigin }, colonyShip, occupiedSlots, reservedSlots, active] = await Promise.all([
+    syncPlanetResources(origin.id, now),
+    prisma.ship.findUnique({
+      where: { planetId_key: { planetId: origin.id, key: 'colonyShip' } },
+      select: { count: true },
+    }),
+    prisma.planet.findMany({
+      where: { galaxy: origin.galaxy, system: origin.system },
+      select: { slot: true },
+    }),
+    prisma.fleetMission.findMany({
+      where: {
+        missionType: MissionType.COLONIZE,
+        status: MissionStatus.OUTBOUND,
+        colonizationAccountId: { not: null },
+        colonizationTargetGalaxy: origin.galaxy,
+        colonizationTargetSystem: origin.system,
+        colonizationTargetSlot: { not: null },
+      },
+      select: { colonizationTargetSlot: true },
+    }),
+    activeColonizationForAccount(req.user!.id),
+  ]);
+  const unavailableSlots = new Set<number>([
+    settledOrigin.slot,
+    ...occupiedSlots.map(({ slot }) => slot),
+    ...reservedSlots.flatMap(({ colonizationTargetSlot }) => validColonizationSlot(colonizationTargetSlot) ? [colonizationTargetSlot] : []),
+  ]);
+  const availableTargetSlots = Array.from({ length: 12 }, (_, index) => index + 1)
+    .filter((slot) => !unavailableSlots.has(slot));
+
+  res.json({
+    selectedOrigin: {
+      id: settledOrigin.id,
+      name: settledOrigin.name,
+      coordinates: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+      heliox: settledOrigin.heliox,
+      availableColonyShips: colonyShip?.count ?? 0,
+    },
+    availableTargetSlots,
+    activeColonization: active ? presentColonization(active, req.user!.id) : null,
+  });
+}));
+
+router.post('/colonizations', asyncHandler(async (req, res) => {
+  const parsed = colonizationLaunchSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  try {
+    const accepted = await launchCanonicalColonization({
+      accountId: req.user!.id,
+      originPlanetId: parsed.data.originPlanetId,
+      targetSlot: parsed.data.targetSlot,
+    });
+    const origin = await prisma.planet.findFirst({
+      where: { id: accepted.originPlanetId, ownerId: req.user!.id },
+      select: { id: true, name: true, galaxy: true, system: true, slot: true },
+    });
+    if (!origin) {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Colonisation state could not be refreshed. Please try again.');
+      return;
+    }
+    res.status(201).json({
+      activeColonization: {
+        origin: {
+          id: origin.id,
+          name: origin.name,
+          coordinates: { galaxy: origin.galaxy, system: origin.system, slot: origin.slot },
+        },
+        target: { coordinates: accepted.target },
+        status: MissionStatus.OUTBOUND,
+        departedAt: accepted.departedAt,
+        arrivesAt: accepted.arrivesAt,
+        durationSeconds: accepted.durationSeconds,
+      },
+    });
+  } catch (error) {
+    if (error instanceof ColonizationLaunchError) { sendColonizationLaunchError(res, error); return; }
     throw error;
   }
 }));
