@@ -49,6 +49,8 @@ model User {
   gateFragments     GateFragment[]
   researchQueue     ResearchQueueItem[]
   colonizationMissions FleetMission[] @relation("ColonizationAccount")
+  espionageOriginMissions FleetMission[] @relation("EspionageOriginAccount")
+  espionageTargetMissions FleetMission[] @relation("EspionageTargetAccount")
 
   @@index([status])
 }
@@ -126,6 +128,8 @@ model Planet {
   deploysDestination FleetMission[] @relation("DeployDestinationPlanet")
   transportsOrigin FleetMission[] @relation("TransportOriginPlanet")
   transportsDestination FleetMission[] @relation("TransportDestinationPlanet")
+  espionageOriginMissions FleetMission[] @relation("EspionageOriginPlanet")
+  espionageTargetMissions FleetMission[] @relation("EspionageTargetPlanet")
   createdByColonization FleetMission? @relation("ColonizationCreatedPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
@@ -267,6 +271,14 @@ enum TransportMissionPhase {
   COMPLETE
 }
 
+// Canonical Probe lifecycle only. It remains nullable so legacy ESPIONAGE
+// rows retain their original generic mission-status semantics untouched.
+enum EspionageProbeMissionPhase {
+  OUTBOUND
+  RETURNING
+  COMPLETE
+}
+
 model FleetMission {
   id             String        @id @default(uuid())
   originId       String
@@ -312,6 +324,23 @@ model FleetMission {
   transportOutboundDurationSeconds Int?
   transportReturnDurationSeconds Int?
   transportPhase TransportMissionPhase?
+  // Stage 11B canonical Probe fields. Legacy generic ESPIONAGE rows leave
+  // every snapshot and phase null; future lifecycle code must use only these
+  // canonical fields together with the established generic travel timestamps.
+  espionageOriginPlanetId String?
+  espionageOriginPlanet Planet? @relation("EspionageOriginPlanet", fields: [espionageOriginPlanetId], references: [id], onDelete: SetNull)
+  espionageTargetPlanetId String?
+  espionageTargetPlanet Planet? @relation("EspionageTargetPlanet", fields: [espionageTargetPlanetId], references: [id], onDelete: SetNull)
+  espionageOriginAccountId String?
+  espionageOriginAccount User? @relation("EspionageOriginAccount", fields: [espionageOriginAccountId], references: [id], onDelete: SetNull)
+  espionageTargetAccountId String?
+  espionageTargetAccount User? @relation("EspionageTargetAccount", fields: [espionageTargetAccountId], references: [id], onDelete: SetNull)
+  espionageProbeShips Json?
+  espionageOutboundFuelHeliox Int?
+  espionageReturnFuelHeliox Int?
+  espionageOutboundDurationSeconds Int?
+  espionageReturnDurationSeconds Int?
+  espionageProbePhase EspionageProbeMissionPhase?
   // Stage 9B canonical colonisation fields. Existing generic COLONIZE rows
   // remain legacy data unless all future lifecycle code explicitly supplies
   // these snapshots.
@@ -334,6 +363,12 @@ model FleetMission {
   @@index([deployDestinationId])
   @@index([transportOriginId, transportPhase])
   @@index([transportDestinationId])
+  @@index([espionageOriginPlanetId, espionageProbePhase])
+  @@index([espionageTargetPlanetId])
+  @@index([espionageOriginAccountId])
+  @@index([espionageTargetAccountId])
+  @@index([espionageProbePhase, arrivesAt])
+  @@index([espionageProbePhase, returnsAt])
   @@index([colonizationAccountId])
 }
 

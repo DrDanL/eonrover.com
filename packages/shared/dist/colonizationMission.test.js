@@ -56,6 +56,12 @@ function validInput(overrides = {}) {
     strict_1.default.ok(first.solarIndex >= profile.solarIndexRange[0] && first.solarIndex <= profile.solarIndexRange[1]);
     strict_1.default.equal(first.fieldCapacity, 180);
 });
+(0, node_test_1.default)('colony characteristics canonicalize a negative-zero temperature before persistence', () => {
+    const characteristics = (0, index_1.deriveColonyCharacteristics)('negative-zero-regression-86');
+    strict_1.default.equal(characteristics.temperature, 0);
+    strict_1.default.equal(Object.is(characteristics.temperature, -0), false);
+    strict_1.default.deepEqual(JSON.parse(JSON.stringify(characteristics)), characteristics);
+});
 (0, node_test_1.default)('colony starter state is explicit and exact', () => {
     strict_1.default.deepEqual(index_1.COLONY_STARTER_STATE, {
         fieldCapacity: 180,

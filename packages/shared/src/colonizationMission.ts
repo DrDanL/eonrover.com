@@ -134,7 +134,11 @@ export function deriveColonyCharacteristics(missionId: string): ColonyCharacteri
   const profile = PLANET_TYPES[planetType];
   const [temperatureMin, temperatureMax] = profile.temperatureRange;
   const [solarMin, solarMax] = profile.solarIndexRange;
-  const temperature = Math.round(temperatureMin + unitInterval(`${missionId}:temperature`) * (temperatureMax - temperatureMin));
+  const roundedTemperature = Math.round(temperatureMin + unitInterval(`${missionId}:temperature`) * (temperatureMax - temperatureMin));
+  // PostgreSQL JSONB canonicalises -0 to 0. Do the same before a mission
+  // snapshot reaches persistence so deterministic characteristics have one
+  // stable numeric representation at every boundary.
+  const temperature = Object.is(roundedTemperature, -0) ? 0 : roundedTemperature;
   const solarIndex = Number((solarMin + unitInterval(`${missionId}:solar`) * (solarMax - solarMin)).toFixed(6));
   if (!Number.isInteger(temperature) || !Number.isFinite(solarIndex) || solarIndex < solarMin || solarIndex > solarMax) {
     throw new Error('Colonization characteristics are invalid.');

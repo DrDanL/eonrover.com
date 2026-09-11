@@ -65,6 +65,14 @@ test('colony characteristics are deterministic and stay in the selected profile 
   assert.equal(first.fieldCapacity, 180);
 });
 
+test('colony characteristics canonicalize a negative-zero temperature before persistence', () => {
+  const characteristics = deriveColonyCharacteristics('negative-zero-regression-86');
+
+  assert.equal(characteristics.temperature, 0);
+  assert.equal(Object.is(characteristics.temperature, -0), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(characteristics)), characteristics);
+});
+
 test('colony starter state is explicit and exact', () => {
   assert.deepEqual(COLONY_STARTER_STATE, {
     fieldCapacity: 180,
