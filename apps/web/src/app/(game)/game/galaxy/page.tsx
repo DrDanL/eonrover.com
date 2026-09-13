@@ -1,14 +1,17 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import { GALAXY_COORDINATE_BOUNDS } from '@eonrover/shared';
 import StatusPanel from '@/components/StatusPanel';
 import { apiGet } from '@/lib/api';
 import { enumLabel, formatNumber } from '@/lib/formatters';
 import { useApiData } from '@/lib/useApiData';
+import { useGameCommand } from '@/lib/GameCommandContext';
 import { GalaxySystemResponse } from '@/lib/web-types';
 
 export default function GalaxyPage() {
+  const { summary } = useGameCommand();
   const [galaxy, setGalaxy] = useState(1);
   const [system, setSystem] = useState(1);
   const loadSystem = useCallback(
@@ -33,7 +36,7 @@ export default function GalaxyPage() {
       {error ? <StatusPanel tone="error" title="Unable to scan system" message={error} /> : null}
       {!loading && !error && data?.slots.length === 0 ? <StatusPanel message="No slots returned for this system." /> : null}
       {!loading && !error && data ? (
-        <div className="panel">
+        <div className="panel" style={{ overflowX: 'auto' }}>
           <table>
             <thead>
               <tr>
@@ -42,6 +45,7 @@ export default function GalaxyPage() {
                 <th>Owner</th>
                 <th>Type</th>
                 <th>Status</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -52,6 +56,7 @@ export default function GalaxyPage() {
                   <td>{slot.occupancy === 'public' ? slot.owner.username : '—'}</td>
                   <td>{slot.occupancy === 'public' ? enumLabel(slot.planet.type) : '—'}</td>
                   <td>{slot.occupancy === 'empty' ? 'Open' : slot.occupancy === 'unavailable' ? 'Unavailable' : slot.owner.protected ? 'Protected' : 'Occupied'}</td>
+                  <td>{slot.occupancy === 'public' && summary?.selectedPlanetId ? <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=espionage&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Send Probe to ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Send Probe</Link> : slot.occupancy === 'public' ? <span className="tag">Select an origin planet first</span> : '—'}</td>
                 </tr>
               ))}
             </tbody>

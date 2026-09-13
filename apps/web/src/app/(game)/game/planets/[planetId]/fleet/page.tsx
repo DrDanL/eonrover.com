@@ -1,28 +1,47 @@
 'use client';
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import StatusPanel from '@/components/StatusPanel';
 import { apiGet, apiPost } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
 import { useGameCommand } from '@/lib/GameCommandContext';
-import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
+import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
 import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
 
 function duration(seconds: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} minutes`;
 }
 
-type FleetMode = 'deploy' | 'colonise' | 'transport';
+type FleetMode = 'deploy' | 'colonise' | 'transport' | 'espionage';
 
-const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport'];
+const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport', 'espionage'];
 
 const emptyCargo: ResourceAmounts = { alloy: 0, heliox: 0, aether: 0 };
 
+type EspionageTarget = { galaxy: number; system: number; slot: number };
+
+function queryCoordinate(value: string | null, maximum: number): number | null {
+  if (!value || !/^[1-9]\d*$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= maximum ? parsed : null;
+}
+
+function queryEspionageTarget(searchParams: URLSearchParams): EspionageTarget | null {
+  const galaxy = queryCoordinate(searchParams.get('targetGalaxy'), 6);
+  const system = queryCoordinate(searchParams.get('targetSystem'), 400);
+  const slot = queryCoordinate(searchParams.get('targetSlot'), 12);
+  return galaxy !== null && system !== null && slot !== null ? { galaxy, system, slot } : null;
+}
+
 export default function FleetPage() {
   const { summary, loading: commandLoading, refresh: refreshCommand } = useGameCommand();
+  const searchParams = useSearchParams();
   const originPlanetId = summary?.selectedPlanetId ?? null;
   const now = useTicker();
   const [mode, setMode] = useState<FleetMode>('deploy');
+  const espionageTarget = useMemo(() => queryEspionageTarget(searchParams), [searchParams]);
   const load = useCallback(async (): Promise<FleetDeploymentsResponse | null> => {
     if (!originPlanetId) return null;
     return apiGet<FleetDeploymentsResponse>(`/api/fleet/deployments?originPlanetId=${encodeURIComponent(originPlanetId)}`);
@@ -48,6 +67,16 @@ export default function FleetPage() {
     error: transportError,
     reload: reloadTransport,
   } = useApiData(loadTransport);
+  const loadEspionage = useCallback(async (): Promise<FleetEspionageResponse | null> => {
+    if (!originPlanetId || mode !== 'espionage') return null;
+    return apiGet<FleetEspionageResponse>(`/api/fleet/espionage?originPlanetId=${encodeURIComponent(originPlanetId)}`);
+  }, [originPlanetId, mode]);
+  const {
+    data: espionageData,
+    loading: espionageLoading,
+    error: espionageError,
+    reload: reloadEspionage,
+  } = useApiData(loadEspionage);
   const [destinationPlanetId, setDestinationPlanetId] = useState('');
   const [speed, setSpeed] = useState<number | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -60,14 +89,18 @@ export default function FleetPage() {
   const [transportCargo, setTransportCargo] = useState<ResourceAmounts>(emptyCargo);
   const [transportConfirmation, setTransportConfirmation] = useState(false);
   const [transportSubmitting, setTransportSubmitting] = useState(false);
+  const [espionageConfirmation, setEspionageConfirmation] = useState(false);
+  const [espionageSubmitting, setEspionageSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const expiryRefresh = useRef<string | null>(null);
   const colonizationExpiryRefresh = useRef<string | null>(null);
   const transportExpiryRefresh = useRef<string | null>(null);
+  const espionageExpiryRefresh = useRef<string | null>(null);
   const active = data?.activeDeployment ?? null;
   const activeColonization = colonizationData?.activeColonization ?? null;
   const activeTransport = transportData?.activeTransport ?? null;
+  const activeEspionage = espionageData?.activeEspionage ?? null;
   const ships = data?.selectedOrigin.ships ?? [];
 
   useEffect(() => {
@@ -80,12 +113,18 @@ export default function FleetPage() {
     setTransporterQuantity(1);
     setTransportCargo(emptyCargo);
     setTransportConfirmation(false);
+    setEspionageConfirmation(false);
     setActionError(null);
     setActionSuccess(null);
     expiryRefresh.current = null;
     colonizationExpiryRefresh.current = null;
     transportExpiryRefresh.current = null;
+    espionageExpiryRefresh.current = null;
   }, [originPlanetId]);
+
+  useEffect(() => {
+    if (searchParams.get('mode') === 'espionage') setMode('espionage');
+  }, [searchParams]);
 
   useEffect(() => {
     if (!data || speed === null || data.supportedSpeedOptions.includes(speed)) return;
@@ -129,6 +168,19 @@ export default function FleetPage() {
   }, [activeTransport, now, reloadTransport, refreshCommand]);
 
   useEffect(() => {
+    if (!activeEspionage) {
+      espionageExpiryRefresh.current = null;
+      return;
+    }
+    const dueAt = activeEspionage.phase === 'RETURNING' ? activeEspionage.returnsAt : activeEspionage.arrivesAt;
+    const refreshKey = `${activeEspionage.phase}:${dueAt}`;
+    if (now < Date.parse(dueAt) || espionageExpiryRefresh.current === refreshKey) return;
+    espionageExpiryRefresh.current = refreshKey;
+    void reloadEspionage();
+    refreshCommand();
+  }, [activeEspionage, now, reloadEspionage, refreshCommand]);
+
+  useEffect(() => {
     if (mode !== 'transport' || activeTransport?.phase !== 'AWAITING_DESTINATION_CAPACITY') return;
     const interval = window.setInterval(() => {
       void reloadTransport();
@@ -159,6 +211,11 @@ export default function FleetPage() {
     && Boolean(transportDestinationPlanetId)
     && validTransportRequest
     && !transportSubmitting;
+  const canReviewEspionage = !activeEspionage
+    && espionageTarget !== null
+    && (espionageData?.selectedOrigin.availableProbes ?? 0) >= 1
+    && (espionageData?.selectedOrigin.espionageTechnologyLevel ?? 0) >= 1
+    && !espionageSubmitting;
 
   function setQuantity(key: string, maximum: number, value: number) {
     const safe = Number.isFinite(value) ? Math.floor(value) : 0;
@@ -236,12 +293,31 @@ export default function FleetPage() {
     }
   }
 
+  async function launchEspionage() {
+    if (!originPlanetId || !espionageTarget || activeEspionage || !espionageConfirmation) return;
+    setEspionageSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await apiPost('/api/fleet/espionage', { originPlanetId, target: espionageTarget });
+      setEspionageConfirmation(false);
+      await reloadEspionage();
+      refreshCommand();
+      setActionSuccess('Espionage Probe accepted. The server-confirmed mission state is now shown below.');
+    } catch (failure) {
+      setActionError(getErrorMessage(failure));
+    } finally {
+      setEspionageSubmitting(false);
+    }
+  }
+
   function changeMode(nextMode: FleetMode) {
     setMode(nextMode);
     setActionError(null);
     setActionSuccess(null);
     setColonizationConfirmation(false);
     setTransportConfirmation(false);
+    setEspionageConfirmation(false);
   }
 
   function handleModeKey(event: KeyboardEvent<HTMLButtonElement>) {
@@ -265,12 +341,15 @@ export default function FleetPage() {
               ? 'Send ships between your own planets. Cargo, recall and all cross-player missions are not available yet.'
               : mode === 'colonise'
                 ? 'Found a new world in this system. Cargo, recall and all cross-player missions are not available yet.'
-                : 'Move resources between your own planets. Cargo is delivered only when the destination can hold it, and Transporters return automatically.'}
+                : mode === 'transport'
+                  ? 'Move resources between your own planets. Cargo is delivered only when the destination can hold it, and Transporters return automatically.'
+                  : 'Send one Probe to a public Galaxy coordinate. Intelligence gathering only: no cargo, recall, combat or mission controls are available.'}
           </p>
           <div className="button-row" role="tablist" aria-label="Fleet command mode">
             <button id="fleet-mode-deploy" type="button" role="tab" aria-selected={mode === 'deploy'} aria-controls="fleet-mode-panel" tabIndex={mode === 'deploy' ? 0 : -1} onClick={() => changeMode('deploy')} onKeyDown={handleModeKey}>Deploy</button>
             <button id="fleet-mode-colonise" type="button" role="tab" aria-selected={mode === 'colonise'} aria-controls="fleet-mode-panel" tabIndex={mode === 'colonise' ? 0 : -1} onClick={() => changeMode('colonise')} onKeyDown={handleModeKey}>Colonise</button>
             <button id="fleet-mode-transport" type="button" role="tab" aria-selected={mode === 'transport'} aria-controls="fleet-mode-panel" tabIndex={mode === 'transport' ? 0 : -1} onClick={() => changeMode('transport')} onKeyDown={handleModeKey}>Transport</button>
+            <button id="fleet-mode-espionage" type="button" role="tab" aria-selected={mode === 'espionage'} aria-controls="fleet-mode-panel" tabIndex={mode === 'espionage' ? 0 : -1} onClick={() => changeMode('espionage')} onKeyDown={handleModeKey}>Espionage</button>
           </div>
       </div>
       {commandLoading && !originPlanetId ? <StatusPanel message="Loading selected planet..." /> : null}
@@ -280,6 +359,8 @@ export default function FleetPage() {
       {mode === 'colonise' && colonizationError && !colonizationData ? <StatusPanel tone="error" title="Colonisation unavailable" message={colonizationError} /> : null}
       {mode === 'transport' && transportLoading && !transportData ? <StatusPanel message="Loading authoritative transport state..." /> : null}
       {mode === 'transport' && transportError && !transportData ? <StatusPanel tone="error" title="Transport unavailable" message={transportError} /> : null}
+      {mode === 'espionage' && espionageLoading && !espionageData ? <StatusPanel message="Loading authoritative Probe state..." /> : null}
+      {mode === 'espionage' && espionageError && !espionageData ? <StatusPanel tone="error" title="Espionage unavailable" message={espionageError} /> : null}
       {actionError ? <div className="alert alert-error" role="alert">{actionError}</div> : null}
       {actionSuccess ? <p className="alert" role="status">{actionSuccess}</p> : null}
       {!commandLoading && !originPlanetId ? <StatusPanel title="No selected planet" message="Select an owned planet before preparing a deployment." /> : null}
@@ -449,6 +530,55 @@ export default function FleetPage() {
             </div>
           </div>}
         </form>}
+      </div> : null}
+      {mode === 'espionage' && espionageData ? <div id="fleet-mode-panel" role="tabpanel" aria-labelledby="fleet-mode-espionage" className="stack">
+        <div className="panel stack" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Selected origin</h2>
+          <p style={{ margin: 0 }}>{formatCoords(espionageData.selectedOrigin.coordinates)}</p>
+          <dl className="research-details">
+            <div><dt>Available Heliox</dt><dd>{formatNumber(espionageData.selectedOrigin.heliox)}</dd></div>
+            <div><dt>Available Probes</dt><dd>{formatNumber(espionageData.selectedOrigin.availableProbes)}</dd></div>
+            <div><dt>Espionage Technology</dt><dd>Level {formatNumber(espionageData.selectedOrigin.espionageTechnologyLevel)}</dd></div>
+          </dl>
+        </div>
+
+        {activeEspionage ? <div className="panel stack" role="status" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Espionage Probe in progress</h2>
+          <p style={{ margin: 0 }}><strong>{formatCoords(espionageData.selectedOrigin.coordinates)}</strong> → <strong>{formatCoords(activeEspionage.target.coordinates)}</strong></p>
+          <dl className="research-details">
+            <div><dt>Phase</dt><dd>{enumLabel(activeEspionage.phase)}</dd></div>
+            <div><dt>Departed</dt><dd>{formatDateTime(activeEspionage.departedAt)}</dd></div>
+            <div><dt>Arrival</dt><dd>{formatDateTime(activeEspionage.arrivesAt)}</dd></div>
+            <div><dt>Return</dt><dd>{formatDateTime(activeEspionage.returnsAt)}</dd></div>
+            <div><dt>Intelligence report</dt><dd>{activeEspionage.intelligenceReportReady ? 'Ready' : 'Pending arrival'}</dd></div>
+          </dl>
+          {(() => {
+            const dueAt = activeEspionage.phase === 'RETURNING' ? activeEspionage.returnsAt : activeEspionage.arrivesAt;
+            return <p style={{ margin: 0 }}>{now >= Date.parse(dueAt) ? 'Confirming Probe state with the server…' : `${formatRelativeCountdown(dueAt, now)} until the next server-confirmed Probe event`}</p>;
+          })()}
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Another Probe mission cannot launch from this origin until this Probe returns. Cargo, recall and combat are not available in this slice.</p>
+        </div> : !espionageTarget ? <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Choose a public Galaxy target</h2>
+          <p style={{ margin: 0 }}>Select an occupied public Galaxy slot, then use Send Probe to return here with its coordinates.</p>
+          <div><Link className="btn" href="/game/galaxy">Browse Galaxy</Link></div>
+        </div> : <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Prepare Espionage Probe</h2>
+          <p style={{ margin: 0 }}>Selected target: <strong>{formatCoords(espionageTarget)}</strong></p>
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>One Probe is committed temporarily. The server validates this public target and calculates the journey and Heliox requirement.</p>
+          {espionageData.selectedOrigin.espionageTechnologyLevel < 1 ? <p className="alert alert-error" role="status">Espionage Technology level 1 is required before launching a Probe.</p> : null}
+          {espionageData.selectedOrigin.availableProbes < 1 ? <p className="alert alert-error" role="status">One available Probe is required before launching this mission.</p> : null}
+          {!espionageConfirmation ? <div className="button-row">
+            <button type="button" className="btn btn-primary" disabled={!canReviewEspionage} onClick={() => setEspionageConfirmation(true)}>Review Probe mission</button>
+            <Link className="btn" href="/game/galaxy">Choose another Galaxy target</Link>
+          </div> : <div className="panel stack" role="status" aria-live="polite">
+            <h3 style={{ margin: 0 }}>Confirm Espionage Probe</h3>
+            <p style={{ margin: 0 }}>Send one Probe from {formatCoords(espionageData.selectedOrigin.coordinates)} to {formatCoords(espionageTarget)}. The server confirms target availability, protection, Heliox and timing. This mission has no cargo or recall.</p>
+            <div className="button-row">
+              <button type="button" onClick={() => setEspionageConfirmation(false)} disabled={espionageSubmitting}>Change target</button>
+              <button type="button" className="btn btn-primary" onClick={() => void launchEspionage()} disabled={espionageSubmitting}>{espionageSubmitting ? 'Submitting Probe…' : 'Confirm Probe mission'}</button>
+            </div>
+          </div>}
+        </div>}
       </div> : null}
     </section>
   );

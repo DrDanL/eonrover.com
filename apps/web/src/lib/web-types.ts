@@ -417,6 +417,23 @@ export interface FleetTransportsResponse {
   } | null;
 }
 
+export interface FleetEspionageResponse {
+  selectedOrigin: {
+    coordinates: { galaxy: number; system: number; slot: number };
+    heliox: number;
+    availableProbes: number;
+    espionageTechnologyLevel: number;
+  };
+  activeEspionage: {
+    phase: 'OUTBOUND' | 'RETURNING';
+    target: { coordinates: { galaxy: number; system: number; slot: number } };
+    departedAt: string;
+    arrivesAt: string;
+    returnsAt: string;
+    intelligenceReportReady: boolean;
+  } | null;
+}
+
 export type GalaxySlot =
   | { slot: number; occupancy: 'empty' }
   | { slot: number; occupancy: 'unavailable' }
