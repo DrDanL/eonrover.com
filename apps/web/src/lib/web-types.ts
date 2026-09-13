@@ -617,26 +617,44 @@ export interface AuditLog {
   actor: { username: string };
 }
 
-export interface CombatReport {
+export type EspionageProbeReportTier = 'IDENTITY' | 'RESOURCES' | 'BUILDINGS' | 'FORCES';
+
+export interface EspionageProbeReportListItem {
   id: string;
-  missionId: string;
-  attackerId: string;
-  defenderId?: string | null;
-  planetId: string;
   createdAt: string;
-  outcome: string;
-  rounds: unknown;
-  debris: unknown;
+  tier: EspionageProbeReportTier;
+  target: {
+    galaxy: number;
+    system: number;
+    slot: number;
+    planet: { name: string; type: string };
+  };
 }
 
-export interface EspionageReport {
+export interface EspionageProbeReportsResponse {
+  reports: EspionageProbeReportListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface EspionageProbeReportDetail {
   id: string;
-  missionId: string;
-  ownerId: string;
-  targetPlanetId: string;
   createdAt: string;
-  accuracy: number;
-  data: unknown;
+  tier: EspionageProbeReportTier;
+  intelligence: {
+    target: {
+      coordinates: { galaxy: number; system: number; slot: number };
+      planetName: string;
+      planetType: string;
+      ownerUsername: string;
+    };
+    tier: EspionageProbeReportTier;
+    resources?: ResourceAmounts;
+    buildings?: Record<string, number>;
+    ships?: Record<string, number>;
+    defences?: Record<string, number>;
+  };
 }
 
 export interface GateFragment {
