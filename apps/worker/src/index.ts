@@ -38,6 +38,10 @@ const {
   reconcilePendingTransportArrivalJobs,
   startTransportArrivalReconciliation,
 } = require('./transportArrivalReconciler') as typeof import('./transportArrivalReconciler');
+const {
+  reconcilePendingEspionageProbeArrivalJobs,
+  startEspionageProbeArrivalReconciliation,
+} = require('./espionageProbeArrivalReconciler') as typeof import('./espionageProbeArrivalReconciler');
 const connection = createRedisConnection();
 
 function logCompletion(name: string) {
@@ -96,6 +100,7 @@ let shipyardReconciliation: ReturnType<typeof startShipyardReconciliation> | und
 let deployArrivalReconciliation: ReturnType<typeof startDeployArrivalReconciliation> | undefined;
 let colonizationArrivalReconciliation: ReturnType<typeof startColonizationArrivalReconciliation> | undefined;
 let transportArrivalReconciliation: ReturnType<typeof startTransportArrivalReconciliation> | undefined;
+let espionageProbeArrivalReconciliation: ReturnType<typeof startEspionageProbeArrivalReconciliation> | undefined;
 void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
@@ -198,6 +203,23 @@ void Promise.all([transportArrivalWorker.waitUntilReady(), transportArrivalQueue
     console.error('[transport-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
   });
 
+void Promise.all([espionageProbeArrivalWorker.waitUntilReady(), espionageProbeArrivalQueue.waitUntilReady()])
+  .then(() => {
+    if (shuttingDown) return;
+    espionageProbeArrivalReconciliation = startEspionageProbeArrivalReconciliation(
+      () => reconcilePendingEspionageProbeArrivalJobs(prisma, espionageProbeArrivalQueue),
+      undefined,
+      (error) => {
+        // eslint-disable-next-line no-console
+        console.error('[espionage-probe-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
+      },
+    );
+  })
+  .catch((error: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('[espionage-probe-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
+  });
+
 const healthServer = http.createServer(createHealthHandler({
   database: async () => {
     await prisma.$queryRaw`SELECT 1`;
@@ -216,6 +238,7 @@ async function shutdown() {
   deployArrivalReconciliation?.stop();
   colonizationArrivalReconciliation?.stop();
   transportArrivalReconciliation?.stop();
+  espionageProbeArrivalReconciliation?.stop();
   healthServer.close();
   await Promise.all([
     buildReconciliationQueue.close(),
