@@ -1,27 +1,18 @@
-import { Router } from 'express';
-import { prisma } from '../lib/prisma';
+import { RequestHandler, Router } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { asyncHandler } from '../middleware/error';
+import { ERROR_CODES, sendError } from '../middleware/error';
 
 const router = Router();
 router.use(requireAuth);
 
-router.get('/combat', asyncHandler(async (req, res) => {
-  const reports = await prisma.combatReport.findMany({
-    where: { OR: [{ attackerId: req.user!.id }, { defenderId: req.user!.id }] },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-  });
-  res.json({ reports });
-}));
+// Generic legacy reports expose raw payloads and have no canonical privacy
+// contract. Keep their player surface unavailable; canonical Probe reports
+// live behind the dedicated allowlisted read routes.
+const unavailable: RequestHandler = (_req, res) => {
+  sendError(res, 503, ERROR_CODES.REPORTS_UNAVAILABLE, 'Reports are temporarily unavailable.');
+};
 
-router.get('/espionage', asyncHandler(async (req, res) => {
-  const reports = await prisma.espionageReport.findMany({
-    where: { ownerId: req.user!.id },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-  });
-  res.json({ reports });
-}));
+router.get('/combat', unavailable);
+router.get('/espionage', unavailable);
 
 export default router;

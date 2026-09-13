@@ -23,6 +23,7 @@ import notificationRoutes from './routes/notifications';
 import publicRoutes from './routes/public';
 import adminRoutes from './routes/admin';
 import reportRoutes from './routes/reports';
+import espionageReportRoutes from './routes/espionageReports';
 import {
   apiErrorHandler,
   apiNotFoundHandler,
@@ -83,6 +84,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.use('/api/leaderboard', leaderboardRoutes);
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/reports', reportRoutes);
+  app.use('/api/espionage/reports', espionageReportRoutes);
   app.use('/api/public', publicRoutes);
   app.use('/api/admin', adminRoutes);
 
