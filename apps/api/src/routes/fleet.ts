@@ -12,6 +12,8 @@ import { ColonizationLaunchError, launchCanonicalColonization } from '../service
 import { syncPlanetResources } from '../services/planetService';
 import { settleCanonicalTransport } from '../services/transportCompletionService';
 import { TransportLaunchError, launchCanonicalTransport } from '../services/transportLaunchService';
+import { settleCanonicalEspionageProbe } from '../services/espionageProbeCompletionService';
+import { EspionageProbeLaunchError, launchCanonicalEspionageProbe } from '../services/espionageProbeLaunchService';
 
 const router = Router();
 router.use(requireAuth);
@@ -29,15 +31,25 @@ const colonizationLaunchSchema = z.object({
   targetSlot: z.number().int(),
 }).strict();
 const transportQuerySchema = z.object({ originPlanetId: z.string().uuid() });
-const safeNonNegativeInteger = z.number().int().nonnegative().refine(Number.isSafeInteger);
+const safeNonNegativeIntegerSchema = z.number().int().nonnegative().refine(Number.isSafeInteger);
 const transportLaunchSchema = z.object({
   originPlanetId: z.string().uuid(),
   destinationPlanetId: z.string().uuid(),
   transporterQuantity: z.number().int().min(1).max(100).refine(Number.isSafeInteger),
   cargo: z.object({
-    alloy: safeNonNegativeInteger,
-    heliox: safeNonNegativeInteger,
-    aether: safeNonNegativeInteger,
+    alloy: safeNonNegativeIntegerSchema,
+    heliox: safeNonNegativeIntegerSchema,
+    aether: safeNonNegativeIntegerSchema,
+  }).strict(),
+}).strict();
+const espionageQuerySchema = z.object({ originPlanetId: z.string().uuid() });
+const safeCoordinate = z.number().int().refine(Number.isSafeInteger);
+const espionageLaunchSchema = z.object({
+  originPlanetId: z.string().uuid(),
+  target: z.object({
+    galaxy: safeCoordinate,
+    system: safeCoordinate,
+    slot: safeCoordinate,
   }).strict(),
 }).strict();
 
@@ -114,6 +126,28 @@ type TransportForPresentation = Pick<FleetMission,
   transportDestination: { id: string; ownerId: string; name: string; galaxy: number; system: number; slot: number } | null;
 };
 
+type SafeEspionageMission = {
+  phase: 'OUTBOUND' | 'RETURNING';
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  departedAt: Date;
+  arrivesAt: Date;
+  returnsAt: Date;
+  intelligenceReportReady: boolean;
+};
+
+type EspionageMissionForPresentation = Pick<FleetMission,
+  'id' | 'originId' | 'targetId' | 'targetGalaxy' | 'targetSystem' | 'targetSlot'
+  | 'missionType' | 'status' | 'speedPercent' | 'departedAt' | 'arrivesAt' | 'returnsAt'
+  | 'espionageOriginPlanetId' | 'espionageTargetPlanetId'
+  | 'espionageOriginAccountId' | 'espionageTargetAccountId'
+  | 'espionageProbeShips' | 'espionageOutboundFuelHeliox' | 'espionageReturnFuelHeliox'
+  | 'espionageOutboundDurationSeconds' | 'espionageReturnDurationSeconds' | 'espionageProbePhase'
+> & {
+  espionageOriginPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
+  espionageTargetPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
+  espionageProbeReport: { id: string } | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -133,6 +167,15 @@ function safeTransporterManifest(value: unknown): { transporter: number } | null
   if (!isRecord(value) || Object.keys(value).length !== 1 || typeof value.transporter !== 'number') return null;
   if (!Number.isSafeInteger(value.transporter) || value.transporter < 1 || value.transporter > 100) return null;
   return { transporter: value.transporter };
+}
+
+function safeProbeManifest(value: unknown): { probe: 1 } | null {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || value.probe !== 1) return null;
+  return { probe: 1 };
+}
+
+function isSafeNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function validColonizationSlot(value: unknown): value is number {
@@ -399,6 +442,103 @@ async function settleTransportForOrigin(originPlanetId: string, currentTime: Dat
   const active = await activeTransportForOrigin(originPlanetId);
   if (!active) return true;
   return (await settleCanonicalTransport(active.id, currentTime)) !== 'unavailable';
+}
+
+function espionageSelect() {
+  return {
+    id: true, originId: true, targetId: true, targetGalaxy: true, targetSystem: true, targetSlot: true,
+    missionType: true, status: true, speedPercent: true, departedAt: true, arrivesAt: true, returnsAt: true,
+    espionageOriginPlanetId: true, espionageTargetPlanetId: true,
+    espionageOriginAccountId: true, espionageTargetAccountId: true,
+    espionageProbeShips: true, espionageOutboundFuelHeliox: true, espionageReturnFuelHeliox: true,
+    espionageOutboundDurationSeconds: true, espionageReturnDurationSeconds: true, espionageProbePhase: true,
+    espionageOriginPlanet: { select: { id: true, ownerId: true, galaxy: true, system: true, slot: true } },
+    espionageTargetPlanet: { select: { id: true, ownerId: true, galaxy: true, system: true, slot: true } },
+    espionageProbeReport: { select: { id: true } },
+  } as const;
+}
+
+async function activeEspionageForOrigin(originPlanetId: string, accountId: string): Promise<EspionageMissionForPresentation | null> {
+  return prisma.fleetMission.findFirst({
+    where: {
+      missionType: MissionType.ESPIONAGE,
+      status: { in: [MissionStatus.OUTBOUND, MissionStatus.RETURNING] },
+      espionageOriginPlanetId: originPlanetId,
+      espionageOriginAccountId: accountId,
+      espionageTargetPlanetId: { not: null },
+      espionageTargetAccountId: { not: null },
+      espionageProbePhase: { in: ['OUTBOUND', 'RETURNING'] },
+    },
+    orderBy: [{ arrivesAt: 'asc' }, { id: 'asc' }],
+    select: espionageSelect(),
+  });
+}
+
+function presentEspionage(mission: EspionageMissionForPresentation, accountId: string, originPlanetId: string): SafeEspionageMission | null {
+  const origin = mission.espionageOriginPlanet;
+  const target = mission.espionageTargetPlanet;
+  const phase = mission.espionageProbePhase;
+  const expectedStatus = phase === 'OUTBOUND' ? MissionStatus.OUTBOUND : MissionStatus.RETURNING;
+  if (
+    mission.missionType !== MissionType.ESPIONAGE
+    || (phase !== 'OUTBOUND' && phase !== 'RETURNING')
+    || mission.status !== expectedStatus
+    || !origin || !target
+    || origin.id !== originPlanetId || origin.ownerId !== accountId
+    || target.ownerId === accountId
+    || mission.originId !== origin.id || mission.targetId !== target.id
+    || mission.espionageOriginPlanetId !== origin.id || mission.espionageTargetPlanetId !== target.id
+    || mission.espionageOriginAccountId !== accountId || mission.espionageTargetAccountId !== target.ownerId
+    || mission.targetGalaxy !== target.galaxy || mission.targetSystem !== target.system || mission.targetSlot !== target.slot
+    || mission.speedPercent !== 100 || !safeProbeManifest(mission.espionageProbeShips)
+    || !isSafeNonNegativeInteger(mission.espionageOutboundFuelHeliox)
+    || !isSafeNonNegativeInteger(mission.espionageReturnFuelHeliox)
+    || !isSafeNonNegativeInteger(mission.espionageOutboundDurationSeconds) || mission.espionageOutboundDurationSeconds <= 0
+    || !isSafeNonNegativeInteger(mission.espionageReturnDurationSeconds) || mission.espionageReturnDurationSeconds <= 0
+    || !Number.isFinite(mission.departedAt.getTime()) || !Number.isFinite(mission.arrivesAt.getTime())
+    || !mission.returnsAt || !Number.isFinite(mission.returnsAt.getTime())
+    || mission.arrivesAt.getTime() - mission.departedAt.getTime() !== mission.espionageOutboundDurationSeconds * 1_000
+    || mission.returnsAt.getTime() - mission.arrivesAt.getTime() !== mission.espionageReturnDurationSeconds * 1_000
+    || (phase === 'OUTBOUND' && mission.espionageProbeReport !== null)
+    || (phase === 'RETURNING' && mission.espionageProbeReport === null)
+  ) return null;
+
+  return {
+    phase,
+    target: { coordinates: { galaxy: target.galaxy, system: target.system, slot: target.slot } },
+    departedAt: mission.departedAt,
+    arrivesAt: mission.arrivesAt,
+    returnsAt: mission.returnsAt,
+    intelligenceReportReady: mission.espionageProbeReport !== null,
+  };
+}
+
+function sendEspionageLaunchError(res: Parameters<RequestHandler>[1], error: EspionageProbeLaunchError): void {
+  switch (error.code) {
+    case 'ORIGIN_NOT_OWNED':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
+      return;
+    case 'INVALID_TARGET':
+      sendError(res, 400, ERROR_CODES.BAD_REQUEST, error.message);
+      return;
+    case 'TARGET_UNAVAILABLE':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Probe target not found');
+      return;
+    case 'TARGET_PROTECTED':
+    case 'ESPIONAGE_IN_PROGRESS':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'MISSING_ESPIONAGE_TECHNOLOGY':
+    case 'INSUFFICIENT_PROBES':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'INSUFFICIENT_HELIOX':
+      sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, error.message);
+      return;
+    case 'ESPIONAGE_UNAVAILABLE':
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message);
+      return;
+  }
 }
 
 function sendLaunchError(res: Parameters<RequestHandler>[1], error: DeployLaunchError): void {
@@ -720,6 +860,70 @@ router.post('/colonizations', asyncHandler(async (req, res) => {
     });
   } catch (error) {
     if (error instanceof ColonizationLaunchError) { sendColonizationLaunchError(res, error); return; }
+    throw error;
+  }
+}));
+
+router.get('/espionage', asyncHandler(async (req, res) => {
+  const parsed = espionageQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  const origin = await prisma.planet.findUnique({ where: { id: parsed.data.originPlanetId } });
+  if (!origin || origin.ownerId !== req.user!.id) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+
+  const now = new Date();
+  const pending = await activeEspionageForOrigin(origin.id, req.user!.id);
+  if (pending) {
+    const completion = await settleCanonicalEspionageProbe(pending.id, now);
+    if (completion === 'unavailable') {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Probe state could not be refreshed. Please try again.');
+      return;
+    }
+  }
+
+  const [{ planet: settledOrigin }, probes, technology, active] = await Promise.all([
+    syncPlanetResources(origin.id, now),
+    prisma.ship.findUnique({
+      where: { planetId_key: { planetId: origin.id, key: 'probe' } },
+      select: { count: true },
+    }),
+    prisma.research.findUnique({
+      where: { userId_key: { userId: req.user!.id, key: 'espionageTech' } },
+      select: { level: true },
+    }),
+    activeEspionageForOrigin(origin.id, req.user!.id),
+  ]);
+  res.json({
+    selectedOrigin: {
+      coordinates: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+      heliox: settledOrigin.heliox,
+      availableProbes: probes?.count ?? 0,
+      espionageTechnologyLevel: technology?.level ?? 0,
+    },
+    activeEspionage: active ? presentEspionage(active, req.user!.id, origin.id) : null,
+  });
+}));
+
+router.post('/espionage', asyncHandler(async (req, res) => {
+  const parsed = espionageLaunchSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  try {
+    const accepted = await launchCanonicalEspionageProbe({
+      userId: req.user!.id,
+      originPlanetId: parsed.data.originPlanetId,
+      target: parsed.data.target,
+    });
+    const active = await activeEspionageForOrigin(accepted.originPlanetId, req.user!.id);
+    const presentation = active ? presentEspionage(active, req.user!.id, accepted.originPlanetId) : null;
+    // An accepted reservation is durable even if its post-commit wake-up was
+    // unavailable. Reconciliation owns recovery and the response exposes no
+    // Redis/BullMQ outcome or identity.
+    if (!presentation) {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Probe state could not be refreshed. Please try again.');
+      return;
+    }
+    res.status(201).json({ activeEspionage: presentation });
+  } catch (error) {
+    if (error instanceof EspionageProbeLaunchError) { sendEspionageLaunchError(res, error); return; }
     throw error;
   }
 }));
