@@ -6,6 +6,9 @@ import { ApiError, apiGet } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber } from '@/lib/formatters';
 import { getErrorMessage, useApiData } from '@/lib/useApiData';
 import {
+  CorvetteStrikeReportDetail,
+  CorvetteStrikeReportListItem,
+  CorvetteStrikeReportsResponse,
   EspionageProbeReportDetail,
   EspionageProbeReportListItem,
   EspionageProbeReportsResponse,
@@ -91,9 +94,93 @@ function ReportDetail({ report, onReturn }: { report: EspionageProbeReportDetail
   );
 }
 
+function combatReportAccessError(error: unknown, missing = false): Error {
+  if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+    return new Error('You do not have permission to view Combat Results.');
+  }
+  if (missing && error instanceof ApiError && error.status === 404) {
+    return new Error('This combat result is not available.');
+  }
+  return error instanceof Error ? error : new Error(getErrorMessage(error));
+}
+
+function CombatQuantitySection({ title, quantities }: { title: string; quantities: Record<string, number> }) {
+  const entries = Object.entries(quantities);
+  if (entries.length === 0) return <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>None</p>;
+  return <section className="panel stack">
+    <h4 style={{ margin: 0 }}>{title}</h4>
+    <dl className="research-details">
+      {entries.map(([key, amount]) => <div key={key}><dt>{enumLabel(key)}</dt><dd>{formatNumber(amount)}</dd></div>)}
+    </dl>
+  </section>;
+}
+
+function CombatReportListItem({ report, selected, onSelect }: {
+  report: CorvetteStrikeReportListItem;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return <article className="panel stack">
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+      <strong>{formatCoords(report.target)}</strong>
+      <span className="tag">{enumLabel(report.outcome)}</span>
+    </div>
+    <p style={{ margin: 0 }}>{report.target.planet.name} · {enumLabel(report.target.planet.type)}</p>
+    <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Corvettes: {formatNumber(report.attacker.startingCorvettes)} sent, {formatNumber(report.attacker.lostCorvettes)} lost, {formatNumber(report.attacker.survivingCorvettes)} surviving. Defender units: {formatNumber(report.defender.survivingUnits)} surviving.</p>
+    <span style={{ color: 'var(--color-text-muted)' }}>Resolved {formatDateTime(report.createdAt)}</span>
+    <div><button type="button" className="btn" aria-pressed={selected} onClick={() => onSelect(report.id)}>View combat result</button></div>
+  </article>;
+}
+
+function CombatReportDetail({ report, onReturn }: { report: CorvetteStrikeReportDetail; onReturn: () => void }) {
+  return <div className="stack" aria-live="polite">
+    <div className="panel stack">
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div className="stack" style={{ gap: '0.25rem' }}>
+          <h2 style={{ margin: 0 }}>Combat Result</h2>
+          <span style={{ color: 'var(--color-text-muted)' }}>Resolved {formatDateTime(report.createdAt)} · {enumLabel(report.outcome)}</span>
+        </div>
+        <div><button type="button" onClick={onReturn}>Back to combat results</button></div>
+      </div>
+      <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>This is an immutable battle snapshot captured at strike arrival. It does not reflect live target state.</p>
+    </div>
+    <section className="panel stack">
+      <h3 style={{ margin: 0 }}>Target</h3>
+      <dl className="research-details">
+        <div><dt>Coordinates</dt><dd>{formatCoords(report.target)}</dd></div>
+        <div><dt>Planet</dt><dd>{report.target.planet.name}</dd></div>
+        <div><dt>Type</dt><dd>{enumLabel(report.target.planet.type)}</dd></div>
+      </dl>
+    </section>
+    <section className="panel stack">
+      <h3 style={{ margin: 0 }}>Attacker Corvettes</h3>
+      <dl className="research-details">
+        <div><dt>Sent</dt><dd>{formatNumber(report.attacker.startingCorvettes)}</dd></div>
+        <div><dt>Lost</dt><dd>{formatNumber(report.attacker.lostCorvettes)}</dd></div>
+        <div><dt>Surviving</dt><dd>{formatNumber(report.attacker.survivingCorvettes)}</dd></div>
+      </dl>
+    </section>
+    <section className="stack" aria-label="Defender forces">
+      <h3 style={{ margin: 0 }}>Defender forces</h3>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div className="stack"><CombatQuantitySection title="Combat ships at start" quantities={report.defender.ships.starting} /><CombatQuantitySection title="Combat ships lost" quantities={report.defender.ships.lost} /><CombatQuantitySection title="Combat ships surviving" quantities={report.defender.ships.surviving} /></div>
+        <div className="stack"><CombatQuantitySection title="Defences at start" quantities={report.defender.defences.starting} /><CombatQuantitySection title="Defences lost" quantities={report.defender.defences.lost} /><CombatQuantitySection title="Defences surviving" quantities={report.defender.defences.surviving} /></div>
+      </div>
+    </section>
+    <section className="panel stack">
+      <h3 style={{ margin: 0 }}>Rounds</h3>
+      {report.rounds.length === 0 ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>No combat rounds were required.</p> : <ol className="stack" style={{ margin: 0, paddingInlineStart: '1.5rem' }}>
+        {report.rounds.map((round) => <li key={round.round}>Round {round.round}: attacker lost {formatNumber(round.attackerLostCorvettes)} Corvette{round.attackerLostCorvettes === 1 ? '' : 's'}; defender lost {formatNumber(round.defenderLostUnits)} unit{round.defenderLostUnits === 1 ? '' : 's'}.</li>)}
+      </ol>}
+    </section>
+  </div>;
+}
+
 export default function ReportsPage() {
   const [page, setPage] = useState(1);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [combatPage, setCombatPage] = useState(1);
+  const [selectedCombatReportId, setSelectedCombatReportId] = useState<string | null>(null);
   const loadReports = useCallback(async () => {
     try {
       return await apiGet<EspionageProbeReportsResponse>(`/api/espionage/reports?page=${page}`);
@@ -115,13 +202,45 @@ export default function ReportsPage() {
     loading: selectedLoading,
     error: selectedError,
   } = useApiData(loadSelectedReport);
+  const loadCombatReports = useCallback(async () => {
+    try {
+      return await apiGet<CorvetteStrikeReportsResponse>(`/api/combat/strikes/reports?page=${combatPage}`);
+    } catch (error) {
+      throw combatReportAccessError(error);
+    }
+  }, [combatPage]);
+  const loadSelectedCombatReport = useCallback(async (): Promise<CorvetteStrikeReportDetail | null> => {
+    if (!selectedCombatReportId) return null;
+    try {
+      return await apiGet<CorvetteStrikeReportDetail>(`/api/combat/strikes/reports/${encodeURIComponent(selectedCombatReportId)}`);
+    } catch (error) {
+      throw combatReportAccessError(error, true);
+    }
+  }, [selectedCombatReportId]);
+  const {
+    data: combatData,
+    loading: combatLoading,
+    error: combatError,
+  } = useApiData(loadCombatReports);
+  const {
+    data: selectedCombatReport,
+    loading: selectedCombatLoading,
+    error: selectedCombatError,
+  } = useApiData(loadSelectedCombatReport);
   const isPermissionError = error === 'You do not have permission to view Probe Intelligence reports.';
   const canPrevious = (data?.page ?? 1) > 1;
   const canNext = data ? data.page * data.pageSize < data.total : false;
+  const canCombatPrevious = (combatData?.page ?? 1) > 1;
+  const canCombatNext = combatData ? combatData.page * combatData.pageSize < combatData.total : false;
 
   function changePage(nextPage: number) {
     setSelectedReportId(null);
     setPage(nextPage);
+  }
+
+  function changeCombatPage(nextPage: number) {
+    setSelectedCombatReportId(null);
+    setCombatPage(nextPage);
   }
 
   return (
@@ -152,6 +271,30 @@ export default function ReportsPage() {
           </div>
         </div>
       ) : null}
+      <div className="panel stack">
+        <h2 style={{ margin: 0 }}>Combat Results</h2>
+        <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Review immutable no-loot Corvette strike snapshots. These results never update with live target data.</p>
+      </div>
+      {combatLoading ? <StatusPanel message="Loading Combat Results..." /> : null}
+      {combatError ? <StatusPanel tone="error" title={combatError === 'You do not have permission to view Combat Results.' ? 'Report access denied' : 'Unable to load combat results'} message={combatError} /> : null}
+      {!combatLoading && !combatError && combatData && selectedCombatReportId ? (
+        selectedCombatLoading ? <div className="stack"><StatusPanel message="Loading selected combat result..." /><div><button type="button" onClick={() => setSelectedCombatReportId(null)}>Back to combat results</button></div></div>
+          : selectedCombatError ? <div className="stack"><StatusPanel tone="error" title="Combat result unavailable" message={selectedCombatError} /><div><button type="button" onClick={() => setSelectedCombatReportId(null)}>Back to combat results</button></div></div>
+            : selectedCombatReport ? <CombatReportDetail report={selectedCombatReport} onReturn={() => setSelectedCombatReportId(null)} />
+              : <StatusPanel message="No combat result was selected." />
+      ) : null}
+      {!combatLoading && !combatError && combatData && !selectedCombatReportId ? <div className="stack">
+        {combatData.reports.length === 0 ? <StatusPanel title="No Combat Results" message="Launch a Corvette strike from Galaxy to capture your first immutable combat snapshot." /> : combatData.reports.map((report) => (
+          <CombatReportListItem key={report.id} report={report} selected={false} onSelect={setSelectedCombatReportId} />
+        ))}
+        <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ color: 'var(--color-text-muted)' }}>Page {combatData.page} · {formatNumber(combatData.total)} results</span>
+          <div className="button-row">
+            <button type="button" onClick={() => changeCombatPage(combatData.page - 1)} disabled={!canCombatPrevious}>Previous</button>
+            <button type="button" onClick={() => changeCombatPage(combatData.page + 1)} disabled={!canCombatNext}>Next</button>
+          </div>
+        </div>
+      </div> : null}
     </section>
   );
 }

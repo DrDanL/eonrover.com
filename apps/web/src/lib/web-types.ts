@@ -434,6 +434,21 @@ export interface FleetEspionageResponse {
   } | null;
 }
 
+export interface FleetStrikesResponse {
+  selectedOrigin: {
+    coordinates: { galaxy: number; system: number; slot: number };
+    heliox: number;
+    availableCorvettes: number;
+  };
+  activeStrike: {
+    phase: 'OUTBOUND' | 'RETURNING';
+    target: { coordinates: { galaxy: number; system: number; slot: number } };
+    departedAt: string;
+    arrivesAt: string;
+    returnsAt: string;
+  } | null;
+}
+
 export type GalaxySlot =
   | { slot: number; occupancy: 'empty' }
   | { slot: number; occupancy: 'unavailable' }
@@ -655,6 +670,42 @@ export interface EspionageProbeReportDetail {
     ships?: Record<string, number>;
     defences?: Record<string, number>;
   };
+}
+
+export type CorvetteStrikeOutcome = 'attacker' | 'defender' | 'draw';
+
+export interface CorvetteStrikeReportListItem {
+  id: string;
+  createdAt: string;
+  target: {
+    galaxy: number;
+    system: number;
+    slot: number;
+    planet: { name: string; type: string };
+  };
+  outcome: CorvetteStrikeOutcome;
+  attacker: { startingCorvettes: number; lostCorvettes: number; survivingCorvettes: number };
+  defender: { startingUnits: number; lostUnits: number; survivingUnits: number };
+}
+
+export interface CorvetteStrikeReportsResponse {
+  reports: CorvetteStrikeReportListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface CorvetteStrikeReportDetail {
+  id: string;
+  createdAt: string;
+  target: CorvetteStrikeReportListItem['target'];
+  outcome: CorvetteStrikeOutcome;
+  attacker: CorvetteStrikeReportListItem['attacker'];
+  defender: {
+    ships: { starting: Record<string, number>; lost: Record<string, number>; surviving: Record<string, number> };
+    defences: { starting: Record<string, number>; lost: Record<string, number>; surviving: Record<string, number> };
+  };
+  rounds: Array<{ round: number; attackerLostCorvettes: number; defenderLostUnits: number }>;
 }
 
 export interface GateFragment {

@@ -7,16 +7,16 @@ import StatusPanel from '@/components/StatusPanel';
 import { apiGet, apiPost } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
 import { useGameCommand } from '@/lib/GameCommandContext';
-import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
+import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetStrikesResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
 import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
 
 function duration(seconds: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} minutes`;
 }
 
-type FleetMode = 'deploy' | 'colonise' | 'transport' | 'espionage';
+type FleetMode = 'deploy' | 'colonise' | 'transport' | 'espionage' | 'strike';
 
-const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport', 'espionage'];
+const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport', 'espionage', 'strike'];
 
 const emptyCargo: ResourceAmounts = { alloy: 0, heliox: 0, aether: 0 };
 
@@ -77,6 +77,16 @@ export default function FleetPage() {
     error: espionageError,
     reload: reloadEspionage,
   } = useApiData(loadEspionage);
+  const loadStrike = useCallback(async (): Promise<FleetStrikesResponse | null> => {
+    if (!originPlanetId || mode !== 'strike') return null;
+    return apiGet<FleetStrikesResponse>(`/api/fleet/strikes?originPlanetId=${encodeURIComponent(originPlanetId)}`);
+  }, [originPlanetId, mode]);
+  const {
+    data: strikeData,
+    loading: strikeLoading,
+    error: strikeError,
+    reload: reloadStrike,
+  } = useApiData(loadStrike);
   const [destinationPlanetId, setDestinationPlanetId] = useState('');
   const [speed, setSpeed] = useState<number | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -91,16 +101,21 @@ export default function FleetPage() {
   const [transportSubmitting, setTransportSubmitting] = useState(false);
   const [espionageConfirmation, setEspionageConfirmation] = useState(false);
   const [espionageSubmitting, setEspionageSubmitting] = useState(false);
+  const [strikeQuantity, setStrikeQuantity] = useState(1);
+  const [strikeConfirmation, setStrikeConfirmation] = useState(false);
+  const [strikeSubmitting, setStrikeSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const expiryRefresh = useRef<string | null>(null);
   const colonizationExpiryRefresh = useRef<string | null>(null);
   const transportExpiryRefresh = useRef<string | null>(null);
   const espionageExpiryRefresh = useRef<string | null>(null);
+  const strikeExpiryRefresh = useRef<string | null>(null);
   const active = data?.activeDeployment ?? null;
   const activeColonization = colonizationData?.activeColonization ?? null;
   const activeTransport = transportData?.activeTransport ?? null;
   const activeEspionage = espionageData?.activeEspionage ?? null;
+  const activeStrike = strikeData?.activeStrike ?? null;
   const ships = data?.selectedOrigin.ships ?? [];
 
   useEffect(() => {
@@ -114,16 +129,20 @@ export default function FleetPage() {
     setTransportCargo(emptyCargo);
     setTransportConfirmation(false);
     setEspionageConfirmation(false);
+    setStrikeQuantity(1);
+    setStrikeConfirmation(false);
     setActionError(null);
     setActionSuccess(null);
     expiryRefresh.current = null;
     colonizationExpiryRefresh.current = null;
     transportExpiryRefresh.current = null;
     espionageExpiryRefresh.current = null;
+    strikeExpiryRefresh.current = null;
   }, [originPlanetId]);
 
   useEffect(() => {
     if (searchParams.get('mode') === 'espionage') setMode('espionage');
+    if (searchParams.get('mode') === 'strike') setMode('strike');
   }, [searchParams]);
 
   useEffect(() => {
@@ -181,6 +200,19 @@ export default function FleetPage() {
   }, [activeEspionage, now, reloadEspionage, refreshCommand]);
 
   useEffect(() => {
+    if (!activeStrike) {
+      strikeExpiryRefresh.current = null;
+      return;
+    }
+    const dueAt = activeStrike.phase === 'RETURNING' ? activeStrike.returnsAt : activeStrike.arrivesAt;
+    const refreshKey = `${activeStrike.phase}:${dueAt}`;
+    if (now < Date.parse(dueAt) || strikeExpiryRefresh.current === refreshKey) return;
+    strikeExpiryRefresh.current = refreshKey;
+    void reloadStrike();
+    refreshCommand();
+  }, [activeStrike, now, reloadStrike, refreshCommand]);
+
+  useEffect(() => {
     if (mode !== 'transport' || activeTransport?.phase !== 'AWAITING_DESTINATION_CAPACITY') return;
     const interval = window.setInterval(() => {
       void reloadTransport();
@@ -216,6 +248,13 @@ export default function FleetPage() {
     && (espionageData?.selectedOrigin.availableProbes ?? 0) >= 1
     && (espionageData?.selectedOrigin.espionageTechnologyLevel ?? 0) >= 1
     && !espionageSubmitting;
+  const maxStrikeQuantity = Math.min(100, strikeData?.selectedOrigin.availableCorvettes ?? 0);
+  const canReviewStrike = !activeStrike
+    && espionageTarget !== null
+    && Number.isSafeInteger(strikeQuantity)
+    && strikeQuantity >= 1
+    && strikeQuantity <= maxStrikeQuantity
+    && !strikeSubmitting;
 
   function setQuantity(key: string, maximum: number, value: number) {
     const safe = Number.isFinite(value) ? Math.floor(value) : 0;
@@ -311,6 +350,30 @@ export default function FleetPage() {
     }
   }
 
+  function setSafeStrikeQuantity(value: number) {
+    const safe = Number.isFinite(value) ? Math.floor(value) : 1;
+    setStrikeQuantity(Math.max(1, Math.min(maxStrikeQuantity || 1, safe)));
+    setStrikeConfirmation(false);
+  }
+
+  async function launchStrike() {
+    if (!originPlanetId || !espionageTarget || activeStrike || !strikeConfirmation || !canReviewStrike) return;
+    setStrikeSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await apiPost('/api/fleet/strikes', { originPlanetId, target: espionageTarget, corvettes: strikeQuantity });
+      setStrikeConfirmation(false);
+      await reloadStrike();
+      refreshCommand();
+      setActionSuccess('Strike accepted. The server-confirmed strike state is now shown below.');
+    } catch (failure) {
+      setActionError(getErrorMessage(failure));
+    } finally {
+      setStrikeSubmitting(false);
+    }
+  }
+
   function changeMode(nextMode: FleetMode) {
     setMode(nextMode);
     setActionError(null);
@@ -318,6 +381,7 @@ export default function FleetPage() {
     setColonizationConfirmation(false);
     setTransportConfirmation(false);
     setEspionageConfirmation(false);
+    setStrikeConfirmation(false);
   }
 
   function handleModeKey(event: KeyboardEvent<HTMLButtonElement>) {
@@ -343,13 +407,16 @@ export default function FleetPage() {
                 ? 'Found a new world in this system. Cargo, recall and all cross-player missions are not available yet.'
                 : mode === 'transport'
                   ? 'Move resources between your own planets. Cargo is delivered only when the destination can hold it, and Transporters return automatically.'
-                  : 'Send one Probe to a public Galaxy coordinate. Intelligence gathering only: no cargo, recall, combat or mission controls are available.'}
+                  : mode === 'espionage'
+                    ? 'Send one Probe to a public Galaxy coordinate. Intelligence gathering only: no cargo, recall, combat or mission controls are available.'
+                    : 'Launch a no-loot Corvette strike at a public same-galaxy coordinate. Surviving Corvettes return automatically.'}
           </p>
           <div className="button-row" role="tablist" aria-label="Fleet command mode">
             <button id="fleet-mode-deploy" type="button" role="tab" aria-selected={mode === 'deploy'} aria-controls="fleet-mode-panel" tabIndex={mode === 'deploy' ? 0 : -1} onClick={() => changeMode('deploy')} onKeyDown={handleModeKey}>Deploy</button>
             <button id="fleet-mode-colonise" type="button" role="tab" aria-selected={mode === 'colonise'} aria-controls="fleet-mode-panel" tabIndex={mode === 'colonise' ? 0 : -1} onClick={() => changeMode('colonise')} onKeyDown={handleModeKey}>Colonise</button>
             <button id="fleet-mode-transport" type="button" role="tab" aria-selected={mode === 'transport'} aria-controls="fleet-mode-panel" tabIndex={mode === 'transport' ? 0 : -1} onClick={() => changeMode('transport')} onKeyDown={handleModeKey}>Transport</button>
             <button id="fleet-mode-espionage" type="button" role="tab" aria-selected={mode === 'espionage'} aria-controls="fleet-mode-panel" tabIndex={mode === 'espionage' ? 0 : -1} onClick={() => changeMode('espionage')} onKeyDown={handleModeKey}>Espionage</button>
+            <button id="fleet-mode-strike" type="button" role="tab" aria-selected={mode === 'strike'} aria-controls="fleet-mode-panel" tabIndex={mode === 'strike' ? 0 : -1} onClick={() => changeMode('strike')} onKeyDown={handleModeKey}>Strike</button>
           </div>
       </div>
       {commandLoading && !originPlanetId ? <StatusPanel message="Loading selected planet..." /> : null}
@@ -361,6 +428,8 @@ export default function FleetPage() {
       {mode === 'transport' && transportError && !transportData ? <StatusPanel tone="error" title="Transport unavailable" message={transportError} /> : null}
       {mode === 'espionage' && espionageLoading && !espionageData ? <StatusPanel message="Loading authoritative Probe state..." /> : null}
       {mode === 'espionage' && espionageError && !espionageData ? <StatusPanel tone="error" title="Espionage unavailable" message={espionageError} /> : null}
+      {mode === 'strike' && strikeLoading && !strikeData ? <StatusPanel message="Loading authoritative strike state..." /> : null}
+      {mode === 'strike' && strikeError && !strikeData ? <StatusPanel tone="error" title="Strike unavailable" message={strikeError} /> : null}
       {actionError ? <div className="alert alert-error" role="alert">{actionError}</div> : null}
       {actionSuccess ? <p className="alert" role="status">{actionSuccess}</p> : null}
       {!commandLoading && !originPlanetId ? <StatusPanel title="No selected planet" message="Select an owned planet before preparing a deployment." /> : null}
@@ -576,6 +645,59 @@ export default function FleetPage() {
             <div className="button-row">
               <button type="button" onClick={() => setEspionageConfirmation(false)} disabled={espionageSubmitting}>Change target</button>
               <button type="button" className="btn btn-primary" onClick={() => void launchEspionage()} disabled={espionageSubmitting}>{espionageSubmitting ? 'Submitting Probe…' : 'Confirm Probe mission'}</button>
+            </div>
+          </div>}
+        </div>}
+      </div> : null}
+      {mode === 'strike' && strikeData ? <div id="fleet-mode-panel" role="tabpanel" aria-labelledby="fleet-mode-strike" className="stack">
+        <div className="panel stack" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Selected origin</h2>
+          <p style={{ margin: 0 }}>{formatCoords(strikeData.selectedOrigin.coordinates)}</p>
+          <dl className="research-details">
+            <div><dt>Available Heliox</dt><dd>{formatNumber(strikeData.selectedOrigin.heliox)}</dd></div>
+            <div><dt>Available Corvettes</dt><dd>{formatNumber(strikeData.selectedOrigin.availableCorvettes)}</dd></div>
+          </dl>
+        </div>
+
+        {activeStrike ? <div className="panel stack" role="status" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Corvette strike in progress</h2>
+          <p style={{ margin: 0 }}><strong>{formatCoords(strikeData.selectedOrigin.coordinates)}</strong> → <strong>{formatCoords(activeStrike.target.coordinates)}</strong></p>
+          <dl className="research-details">
+            <div><dt>Phase</dt><dd>{enumLabel(activeStrike.phase)}</dd></div>
+            <div><dt>Departed</dt><dd>{formatDateTime(activeStrike.departedAt)}</dd></div>
+            <div><dt>Arrival</dt><dd>{formatDateTime(activeStrike.arrivesAt)}</dd></div>
+            <div><dt>Return</dt><dd>{formatDateTime(activeStrike.returnsAt)}</dd></div>
+          </dl>
+          {(() => {
+            const dueAt = activeStrike.phase === 'RETURNING' ? activeStrike.returnsAt : activeStrike.arrivesAt;
+            return <p style={{ margin: 0 }}>{now >= Date.parse(dueAt) ? 'Confirming strike state with the server…' : `${formatRelativeCountdown(dueAt, now)} until the next server-confirmed strike event`}</p>;
+          })()}
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Another strike cannot launch from this origin until this mission completes. There is no loot, cargo, recall or cancellation in this version.</p>
+        </div> : !espionageTarget ? <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Choose a public Galaxy target</h2>
+          <p style={{ margin: 0 }}>Select a public, unprotected target in this origin’s galaxy, then use Launch Strike to return here with its coordinates.</p>
+          <div><Link className="btn" href="/game/galaxy">Browse Galaxy</Link></div>
+        </div> : <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Prepare Corvette strike</h2>
+          <p style={{ margin: 0 }}>Selected target: <strong>{formatCoords(espionageTarget)}</strong></p>
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>The server validates target availability and protection, reserves your selected Corvettes, and calculates travel and Heliox. This strike has no loot; surviving Corvettes return automatically.</p>
+          {strikeData.selectedOrigin.availableCorvettes < 1 ? <p className="alert alert-error" role="status">At least one available Corvette is required before launching a strike.</p> : null}
+          <label htmlFor="strike-corvette-quantity">Corvettes to send
+            <div className="button-row">
+              <button type="button" onClick={() => setSafeStrikeQuantity(strikeQuantity - 1)} disabled={strikeSubmitting || strikeQuantity <= 1} aria-label="Decrease Corvette quantity">−</button>
+              <input id="strike-corvette-quantity" type="number" min="1" max={maxStrikeQuantity} step="1" inputMode="numeric" value={strikeQuantity} onChange={(event) => setSafeStrikeQuantity(Number(event.target.value))} disabled={strikeSubmitting || maxStrikeQuantity < 1} required />
+              <button type="button" onClick={() => setSafeStrikeQuantity(strikeQuantity + 1)} disabled={strikeSubmitting || strikeQuantity >= maxStrikeQuantity} aria-label="Increase Corvette quantity">+</button>
+            </div>
+          </label>
+          {!strikeConfirmation ? <div className="button-row">
+            <button type="button" className="btn btn-primary" disabled={!canReviewStrike} onClick={() => setStrikeConfirmation(true)}>Review strike</button>
+            <Link className="btn" href="/game/galaxy">Choose another Galaxy target</Link>
+          </div> : <div className="panel stack" role="status" aria-live="polite">
+            <h3 style={{ margin: 0 }}>Confirm Corvette strike</h3>
+            <p style={{ margin: 0 }}>Send {formatNumber(strikeQuantity)} Corvette{strikeQuantity === 1 ? '' : 's'} from {formatCoords(strikeData.selectedOrigin.coordinates)} to {formatCoords(espionageTarget)}. The server reserves the selected Corvettes and calculates travel and Heliox. This strike has no loot, and surviving Corvettes return automatically.</p>
+            <div className="button-row">
+              <button type="button" onClick={() => setStrikeConfirmation(false)} disabled={strikeSubmitting}>Change strike</button>
+              <button type="button" className="btn btn-primary" onClick={() => void launchStrike()} disabled={strikeSubmitting}>{strikeSubmitting ? 'Submitting strike…' : 'Confirm strike'}</button>
             </div>
           </div>}
         </div>}

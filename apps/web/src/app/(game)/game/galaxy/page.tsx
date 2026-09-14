@@ -12,6 +12,7 @@ import { GalaxySystemResponse } from '@/lib/web-types';
 
 export default function GalaxyPage() {
   const { summary } = useGameCommand();
+  const selectedOriginGalaxy = summary?.selectedPlanet?.identity.coordinates.galaxy ?? null;
   const [galaxy, setGalaxy] = useState(1);
   const [system, setSystem] = useState(1);
   const loadSystem = useCallback(
@@ -56,7 +57,12 @@ export default function GalaxyPage() {
                   <td>{slot.occupancy === 'public' ? slot.owner.username : '—'}</td>
                   <td>{slot.occupancy === 'public' ? enumLabel(slot.planet.type) : '—'}</td>
                   <td>{slot.occupancy === 'empty' ? 'Open' : slot.occupancy === 'unavailable' ? 'Unavailable' : slot.owner.protected ? 'Protected' : 'Occupied'}</td>
-                  <td>{slot.occupancy === 'public' && summary?.selectedPlanetId ? <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=espionage&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Send Probe to ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Send Probe</Link> : slot.occupancy === 'public' ? <span className="tag">Select an origin planet first</span> : '—'}</td>
+                  <td>{slot.occupancy === 'public' && summary?.selectedPlanetId ? <div className="button-row">
+                    <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=espionage&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Send Probe to ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Send Probe</Link>
+                    {slot.owner.protected ? <span className="tag">Strike unavailable: protected</span>
+                      : selectedOriginGalaxy !== galaxy ? <span className="tag">Strike unavailable: same galaxy required</span>
+                        : <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=strike&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Launch Strike at ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Launch Strike</Link>}
+                  </div> : slot.occupancy === 'public' ? <span className="tag">Select an origin planet first</span> : '—'}</td>
                 </tr>
               ))}
             </tbody>
