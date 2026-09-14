@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { z } from 'zod';
-import { DEFENCES, isActiveShipyardDefenceKey, SHIPS, SHIPYARD_BY_ID, SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, ShipKey, completeDueShipyardForPlanet, completeShipyardBatch, evaluateShipyardCatalogue, shipyardDurationForCatalogue } from '@eonrover/shared';
+import { DEFENCES, DEFENCE_CATALOGUE, evaluateDefenceCatalogue, isActiveShipyardDefenceKey, SHIPS, SHIPYARD_BY_ID, SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, ShipKey, completeDueShipyardForPlanet, completeShipyardBatch, evaluateShipyardCatalogue, shipyardDurationForCatalogue } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { shipyardQueue } from '../lib/redis';
 import { requireAuth } from '../middleware/auth';
@@ -41,13 +41,19 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const planet = await assertOwnedPlanet(req.params.planetId, req.user!.id);
   if (!planet) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
   await completeDueShipyardForPlanet(prisma, planet.id);
-  const [{ planet: settled }, ships, buildings, research, queue, config] = await Promise.all([
-    syncPlanetResources(planet.id), prisma.ship.findMany({ where: { planetId: planet.id } }), prisma.building.findMany({ where: { planetId: planet.id } }), prisma.research.findMany({ where: { userId: req.user!.id } }), prisma.shipyardQueueItem.findMany({ where: { planetId: planet.id }, orderBy: [{ startedAt: 'asc' }, { id: 'asc' }] }), getUniverseConfig(),
+  const [{ planet: settled }, ships, defences, buildings, research, queue, config] = await Promise.all([
+    syncPlanetResources(planet.id), prisma.ship.findMany({ where: { planetId: planet.id } }), prisma.defence.findMany({ where: { planetId: planet.id } }), prisma.building.findMany({ where: { planetId: planet.id } }), prisma.research.findMany({ where: { userId: req.user!.id } }), prisma.shipyardQueueItem.findMany({ where: { planetId: planet.id }, orderBy: [{ startedAt: 'asc' }, { id: 'asc' }] }), getUniverseConfig(),
   ]);
   const buildingLevels = Object.fromEntries(buildings.map((building) => [building.key, building.level]));
   const researchLevels = Object.fromEntries(research.map((row) => [row.key, row.level]));
   const active = queue.find((item) => item.status === 'PENDING' && (item.itemType === 'ship' || (item.itemType === 'defence' && item.canonicalDefenceKey === 'flakTurret' && item.itemKey === 'flakTurret')));
-  res.json({ selectedPlanet: { id: settled.id, name: settled.name, shipyardLevel: buildingLevels.shipyard ?? 0, resources: { alloy: settled.alloy, heliox: settled.heliox, aether: settled.aether } }, categories: SHIPYARD_CATEGORIES, catalog: SHIPYARD_CATALOGUE.map((entry) => ({ ...evaluateShipyardCatalogue({ id: entry.id, shipyardLevel: buildingLevels.shipyard ?? 0, economySpeed: config.economySpeed, buildingLevels, researchLevels }), owned: ships.find((ship) => ship.key === entry.id)?.count ?? 0 })), activeQueue: active ? presentQueueItem(active) : null, legacyQueue: queue.filter((item) => item.id !== active?.id).map((item) => ({ id: item.id, itemKey: item.itemKey, itemType: item.itemType, quantity: item.quantity, remaining: item.remaining, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status })) });
+  const resources = { alloy: settled.alloy, heliox: settled.heliox, aether: settled.aether };
+  const defenceCatalog = DEFENCE_CATALOGUE.map((entry) => {
+    const evaluated = evaluateDefenceCatalogue({ id: entry.id, shipyardLevel: buildingLevels.shipyard ?? 0, economySpeed: config.economySpeed, buildingLevels, researchLevels, durationForBaseSeconds: shipyardDurationForCatalogue });
+    const affordable = resources.alloy >= evaluated.cost.alloy && resources.heliox >= evaluated.cost.heliox && resources.aether >= evaluated.cost.aether;
+    return { id: evaluated.key, name: evaluated.name, displayOrder: entry.displayOrder, availability: evaluated.availability, availabilityReason: evaluated.availabilityMessage, owned: defences.find((defence) => defence.key === evaluated.key)?.count ?? 0, cost: evaluated.cost, durationSeconds: evaluated.durationSeconds, statistics: evaluated.statistics, requirements: evaluated.requirements, meetsRequirements: evaluated.meetsRequirements, affordable, quantity: { min: 1, max: MAX_SHIPYARD_BATCH_QUANTITY }, fieldState: { capacity: settled.fieldCapacity, used: buildings.length }, energyRequired: 0 };
+  });
+  res.json({ selectedPlanet: { id: settled.id, name: settled.name, shipyardLevel: buildingLevels.shipyard ?? 0, resources }, categories: SHIPYARD_CATEGORIES, catalog: SHIPYARD_CATALOGUE.map((entry) => ({ ...evaluateShipyardCatalogue({ id: entry.id, shipyardLevel: buildingLevels.shipyard ?? 0, economySpeed: config.economySpeed, buildingLevels, researchLevels }), owned: ships.find((ship) => ship.key === entry.id)?.count ?? 0 })), defences: defenceCatalog, activeQueue: active ? presentQueueItem(active) : null, legacyQueue: queue.filter((item) => item.id !== active?.id).map((item) => ({ id: item.id, itemKey: item.itemKey, itemType: item.itemType, quantity: item.quantity, remaining: item.remaining, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status })) });
 }));
 
 router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {

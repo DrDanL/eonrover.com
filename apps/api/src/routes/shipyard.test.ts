@@ -23,7 +23,7 @@ describe('read-only Shipyard catalogue', () => {
     await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).expect(401);
     await request(app).get(`/api/planets/${other.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(404);
     const response = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
-    expect(Object.keys(response.body).sort()).toEqual(['activeQueue', 'catalog', 'categories', 'legacyQueue', 'selectedPlanet']);
+    expect(Object.keys(response.body).sort()).toEqual(['activeQueue', 'catalog', 'categories', 'defences', 'legacyQueue', 'selectedPlanet']);
     expect(response.body.activeQueue).toEqual(expect.objectContaining({ id: pending.id, shipKey: 'scout', shipName: 'Scout', quantity: 2, status: 'PENDING', cancellation: { refundPercentage: 50, refund: { alloy: 2000, heliox: 1000, aether: 0 } } }));
     expect(response.body.categories.map((item: { id: string }) => item.id)).toEqual(['civilian', 'combat', 'specialist']);
     expect(response.body.catalog.map((item: { id: string }) => item.id)).toEqual(['scout', 'transporter', 'colonyShip', 'corvette', 'frigate', 'probe', 'recycler']);
@@ -191,6 +191,23 @@ describe('read-only Shipyard catalogue', () => {
     await Promise.all([completeShipyardBatch(prisma, accepted.body.queueItem.id), completeShipyardBatch(prisma, accepted.body.queueItem.id)]);
     expect(await prisma.defence.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'flakTurret' } } })).toMatchObject({ count: 2 });
     expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
+  });
+
+  it('projects an allowlisted defence catalogue without promoting legacy rows', async () => {
+    const owner = await player('shipyard-defence-read');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, aether: 1_000, lastProductionAt: new Date() } });
+    await prisma.defence.create({ data: { planetId: owner.planet.id, key: 'flakTurret', count: 3 } });
+    await prisma.shipyardQueueItem.create({ data: { planetId: owner.planet.id, itemKey: 'railBattery', itemType: 'defence', quantity: 9, remaining: 9, costAlloy: 1, costHeliox: 1, costAether: 1, durationSeconds: 1, completesAt: new Date(Date.now() + 60_000) } });
+    const response = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
+    expect(response.body.defences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'flakTurret', availability: 'ACTIVE', owned: 3, quantity: { min: 1, max: 100 } }),
+      expect.objectContaining({ id: 'railBattery', availability: 'COMING_LATER', availabilityReason: 'Coming later.' }),
+      expect.objectContaining({ id: 'planetaryShield', availability: 'COMING_LATER', availabilityReason: 'Coming later.' }),
+    ]));
+    expect(response.body.defences.map((defence: { id: string }) => defence.id)).toEqual(['flakTurret', 'railBattery', 'planetaryShield']);
+    expect(JSON.stringify(response.body.defences)).not.toContain('canonicalDefenceKey');
+    expect(response.body.activeQueue).toBeNull();
+    expect(response.body.legacyQueue).toEqual(expect.arrayContaining([expect.objectContaining({ itemKey: 'railBattery' })]));
   });
 
   it('contains legacy defence rows and includes a completed canonical Flak Turret in an immutable strike report', async () => {
