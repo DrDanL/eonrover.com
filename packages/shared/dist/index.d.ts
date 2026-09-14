@@ -24,3 +24,5 @@ export * from './espionageDisclosure';
 export * from './espionageProbeCompletion';
 export * from './espionageProbeArrivalScheduling';
 export * from './corvetteStrike';
+export * from './corvetteStrikeCompletion';
+export * from './corvetteStrikeArrivalScheduling';

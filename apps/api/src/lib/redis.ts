@@ -26,6 +26,7 @@ export const transportArrivalQueue = new Queue('transport-arrival-queue', { conn
 // Canonical Probe wake-ups are deliberately isolated from the dormant legacy
 // fleet queue. This stage registers no consumer for this queue.
 export const espionageProbeArrivalQueue = new Queue('espionage-probe-arrival-queue', { connection });
+export const corvetteStrikeArrivalQueue = new Queue('corvette-strike-arrival-queue', { connection });
 
 export const QUEUE_NAMES = {
   build: 'build-queue',
@@ -36,4 +37,5 @@ export const QUEUE_NAMES = {
   colonizationArrival: 'colonization-arrival-queue',
   transportArrival: 'transport-arrival-queue',
   espionageProbeArrival: 'espionage-probe-arrival-queue',
+  corvetteStrikeArrival: 'corvette-strike-arrival-queue',
 } as const;

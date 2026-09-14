@@ -13,7 +13,8 @@ const { processDeployArrivalJob } = require('./processors/deployArrivalProcessor
 const { processColonizationArrivalJob } = require('./processors/colonizationArrivalProcessor') as typeof import('./processors/colonizationArrivalProcessor');
 const { processTransportArrivalJob } = require('./processors/transportArrivalProcessor') as typeof import('./processors/transportArrivalProcessor');
 const { processEspionageProbeArrivalJob } = require('./processors/espionageProbeArrivalProcessor') as typeof import('./processors/espionageProbeArrivalProcessor');
-const { deployArrivalQueue, colonizationArrivalQueue, transportArrivalQueue, espionageProbeArrivalQueue } = require('./queues') as typeof import('./queues');
+const { processCorvetteStrikeArrivalJob } = require('./processors/corvetteStrikeArrivalProcessor') as typeof import('./processors/corvetteStrikeArrivalProcessor');
+const { deployArrivalQueue, colonizationArrivalQueue, transportArrivalQueue, espionageProbeArrivalQueue, corvetteStrikeArrivalQueue } = require('./queues') as typeof import('./queues');
 const {
   reconcilePendingBuildingJobs,
   startBuildingReconciliation,
@@ -42,6 +43,10 @@ const {
   reconcilePendingEspionageProbeArrivalJobs,
   startEspionageProbeArrivalReconciliation,
 } = require('./espionageProbeArrivalReconciler') as typeof import('./espionageProbeArrivalReconciler');
+const {
+  reconcilePendingCorvetteStrikeArrivalJobs,
+  startCorvetteStrikeArrivalReconciliation,
+} = require('./corvetteStrikeArrivalReconciler') as typeof import('./corvetteStrikeArrivalReconciler');
 const connection = createRedisConnection();
 
 function logCompletion(name: string) {
@@ -76,6 +81,7 @@ const transportArrivalWorker = new Worker('transport-arrival-queue', processTran
 // Probe work uses its own deterministic queue. Missing-job recovery remains a
 // later stage; this worker only wakes the shared authoritative lifecycle.
 const espionageProbeArrivalWorker = new Worker('espionage-probe-arrival-queue', processEspionageProbeArrivalJob, { connection });
+const corvetteStrikeArrivalWorker = new Worker('corvette-strike-arrival-queue', processCorvetteStrikeArrivalJob, { connection });
 
 for (const [name, worker] of [
   ['build-queue', buildWorker],
@@ -85,6 +91,7 @@ for (const [name, worker] of [
   ['colonization-arrival-queue', colonizationArrivalWorker],
   ['transport-arrival-queue', transportArrivalWorker],
   ['espionage-probe-arrival-queue', espionageProbeArrivalWorker],
+  ['corvette-strike-arrival-queue', corvetteStrikeArrivalWorker],
 ] as const) {
   worker.on('completed', logCompletion(name));
   worker.on('failed', logFailure(name));
@@ -101,6 +108,7 @@ let deployArrivalReconciliation: ReturnType<typeof startDeployArrivalReconciliat
 let colonizationArrivalReconciliation: ReturnType<typeof startColonizationArrivalReconciliation> | undefined;
 let transportArrivalReconciliation: ReturnType<typeof startTransportArrivalReconciliation> | undefined;
 let espionageProbeArrivalReconciliation: ReturnType<typeof startEspionageProbeArrivalReconciliation> | undefined;
+let corvetteStrikeArrivalReconciliation: ReturnType<typeof startCorvetteStrikeArrivalReconciliation> | undefined;
 void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
@@ -220,6 +228,23 @@ void Promise.all([espionageProbeArrivalWorker.waitUntilReady(), espionageProbeAr
     console.error('[espionage-probe-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
   });
 
+void Promise.all([corvetteStrikeArrivalWorker.waitUntilReady(), corvetteStrikeArrivalQueue.waitUntilReady()])
+  .then(() => {
+    if (shuttingDown) return;
+    corvetteStrikeArrivalReconciliation = startCorvetteStrikeArrivalReconciliation(
+      () => reconcilePendingCorvetteStrikeArrivalJobs(prisma, corvetteStrikeArrivalQueue),
+      undefined,
+      (error) => {
+        // eslint-disable-next-line no-console
+        console.error('[corvette-strike-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
+      },
+    );
+  })
+  .catch((error: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('[corvette-strike-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
+  });
+
 const healthServer = http.createServer(createHealthHandler({
   database: async () => {
     await prisma.$queryRaw`SELECT 1`;
@@ -239,6 +264,7 @@ async function shutdown() {
   colonizationArrivalReconciliation?.stop();
   transportArrivalReconciliation?.stop();
   espionageProbeArrivalReconciliation?.stop();
+  corvetteStrikeArrivalReconciliation?.stop();
   healthServer.close();
   await Promise.all([
     buildReconciliationQueue.close(),
@@ -248,6 +274,7 @@ async function shutdown() {
     colonizationArrivalQueue.close(),
     transportArrivalQueue.close(),
     espionageProbeArrivalQueue.close(),
+    corvetteStrikeArrivalQueue.close(),
     buildWorker.close(),
     researchWorker.close(),
     shipyardWorker.close(),
@@ -255,6 +282,7 @@ async function shutdown() {
     colonizationArrivalWorker.close(),
     transportArrivalWorker.close(),
     espionageProbeArrivalWorker.close(),
+    corvetteStrikeArrivalWorker.close(),
   ]);
   process.exit(0);
 }

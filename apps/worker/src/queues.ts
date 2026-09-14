@@ -17,3 +17,6 @@ export const transportArrivalQueue = new Queue('transport-arrival-queue', { conn
 // Canonical Probe wake-ups are isolated from both the trusted mission queues
 // and the deliberately dormant legacy fleet queue.
 export const espionageProbeArrivalQueue = new Queue('espionage-probe-arrival-queue', { connection });
+// Canonical Corvette strikes use a dedicated wake-up queue; legacy fleet work
+// remains deliberately dormant.
+export const corvetteStrikeArrivalQueue = new Queue('corvette-strike-arrival-queue', { connection });

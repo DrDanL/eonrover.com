@@ -9,6 +9,7 @@ import {
 import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
+import { scheduleCorvetteStrikeArrivalWakeup } from './corvetteStrikeArrivalSchedulingService';
 
 const ATTEMPTS = 3;
 export type CorvetteStrikeLaunchErrorCode = 'ORIGIN_NOT_OWNED' | 'INVALID_TARGET' | 'TARGET_UNAVAILABLE' | 'TARGET_PROTECTED' | 'INSUFFICIENT_CORVETTES' | 'INSUFFICIENT_HELIOX' | 'STRIKE_IN_PROGRESS' | 'STRIKE_UNAVAILABLE';
@@ -44,7 +45,7 @@ function techSnapshot(rows: Array<{ key: string; level: number }>) { const value
 export async function launchCanonicalCorvetteStrike(input: CorvetteStrikeLaunchInput): Promise<AcceptedCorvetteStrikeLaunch> {
   assertInput(input); const target = targetCoordinates(input.target); const config = await getUniverseConfig();
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) try {
-    return await prisma.$transaction(async (tx) => {
+    const acceptedLaunch = await prisma.$transaction(async (tx) => {
       const candidate = await tx.planet.findUnique({ where: { galaxy_system_slot: target }, select: { id: true, ownerId: true } });
       if (!candidate) failure('TARGET_UNAVAILABLE', 'The strike target is unavailable.');
       for (const id of [...new Set([input.userId, candidate.ownerId])].sort()) await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${id} FOR UPDATE`;
@@ -75,6 +76,10 @@ export async function launchCanonicalCorvetteStrike(input: CorvetteStrikeLaunchI
       const mission = await tx.fleetMission.create({ data: { originId: origin.id, targetId: destination.id, targetGalaxy: destination.galaxy, targetSystem: destination.system, targetSlot: destination.slot, missionType: 'ATTACK', ships: accepted.ships, cargo: { alloy: 0, heliox: 0, aether: 0 }, speedPercent: accepted.speedPercent, departedAt, arrivesAt, returnsAt, status: 'OUTBOUND', corvetteStrikeOriginPlanetId: origin.id, corvetteStrikeTargetPlanetId: destination.id, corvetteStrikeAttackerId: attacker.id, corvetteStrikeDefenderId: destination.ownerId, corvetteStrikeShips: accepted.ships, corvetteStrikeOutboundFuelHeliox: accepted.outboundFuelHeliox, corvetteStrikeReturnFuelHeliox: accepted.returnFuelHeliox, corvetteStrikeOutboundDurationSeconds: accepted.outboundDurationSeconds, corvetteStrikeReturnDurationSeconds: accepted.returnDurationSeconds, corvetteStrikeResolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, corvetteStrikeResolverSeed: randomBytes(32).toString('hex'), corvetteStrikeAttackerTechnology: technology, corvetteStrikePhase: 'OUTBOUND' } });
       return { missionId: mission.id, originPlanetId: origin.id, target, ships: accepted.ships, outboundFuelHeliox: accepted.outboundFuelHeliox, returnFuelHeliox: accepted.returnFuelHeliox, outboundDurationSeconds: accepted.outboundDurationSeconds, returnDurationSeconds: accepted.returnDurationSeconds, departedAt, arrivesAt, returnsAt, phase: 'OUTBOUND' as const };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    // Redis is only a post-commit wake-up. A failure intentionally leaves the
+    // accepted reservation durable for reconciliation to recover later.
+    await scheduleCorvetteStrikeArrivalWakeup(acceptedLaunch.missionId);
+    return acceptedLaunch;
   } catch (error) {
     if (error instanceof CorvetteStrikeLaunchError) throw error;
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new CorvetteStrikeLaunchError('STRIKE_IN_PROGRESS', 'A Corvette strike is already active from this planet.');

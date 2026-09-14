@@ -40,3 +40,5 @@ __exportStar(require("./espionageDisclosure"), exports);
 __exportStar(require("./espionageProbeCompletion"), exports);
 __exportStar(require("./espionageProbeArrivalScheduling"), exports);
 __exportStar(require("./corvetteStrike"), exports);
+__exportStar(require("./corvetteStrikeCompletion"), exports);
+__exportStar(require("./corvetteStrikeArrivalScheduling"), exports);
