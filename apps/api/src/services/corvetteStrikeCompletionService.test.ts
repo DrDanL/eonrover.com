@@ -26,7 +26,14 @@ describe('canonical Corvette strike completion', () => {
     expect(await settleCanonicalCorvetteStrike(prisma, data.mission.id, data.now)).toBe('arrived');
     const mission = await prisma.fleetMission.findUniqueOrThrow({ where: { id: data.mission.id } });
     expect(mission).toMatchObject({ corvetteStrikePhase: 'RETURNING', status: 'RETURNING' });
-    expect(await prisma.corvetteStrikeReport.count()).toBe(1); expect(await prisma.notification.count()).toBe(2);
+    const report = await prisma.corvetteStrikeReport.findUniqueOrThrow({ where: { missionId: data.mission.id } });
+    expect(report.resultSnapshot).toMatchObject({
+      target: {
+        coordinates: { galaxy: data.target.galaxy, system: data.target.system, slot: data.target.slot },
+        planet: { name: data.target.name, type: data.target.planetType },
+      },
+    });
+    expect(await prisma.notification.count()).toBe(2);
     await expect(prisma.corvetteStrikeReport.update({ where: { missionId: data.mission.id }, data: { resolverVersion: 'changed' } })).rejects.toThrow('CorvetteStrikeReport rows are immutable');
     expect(await settleCanonicalCorvetteStrike(prisma, data.mission.id, data.now)).toBe('early');
     expect(await prisma.corvetteStrikeReport.count()).toBe(1); expect(await prisma.notification.count()).toBe(2);

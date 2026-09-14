@@ -120,6 +120,21 @@ export async function settleCanonicalCorvetteStrike(
             attacker: { corvettes: canonical.ships.corvette, technology: canonical.attackerTechnology },
             defender: { ships: quantities(ships, SHIPS), defences: quantities(defences, DEFENCES), technology: defenderTechnology(research) },
           });
+          // The canonical report must remain independently readable after the
+          // mission and target change. Persist the small public target identity
+          // alongside the resolver result; never make a later read join live
+          // target state as a fallback.
+          const reportSnapshot = {
+            target: {
+              coordinates: { galaxy: target.galaxy, system: target.system, slot: target.slot },
+              planet: { name: target.name, type: target.planetType },
+            },
+            outcome: result.outcome,
+            starting: result.starting,
+            survivors: result.survivors,
+            losses: result.losses,
+            rounds: result.rounds,
+          };
           for (const [key, count] of Object.entries(result.losses.defender)) {
             if (count > 0 && key in SHIPS) await tx.ship.updateMany({ where: { planetId: target.id, key, count: { gte: count } }, data: { count: { decrement: count } } });
             if (count > 0 && key in DEFENCES) await tx.defence.updateMany({ where: { planetId: target.id, key, count: { gte: count } }, data: { count: { decrement: count } } });
@@ -132,7 +147,7 @@ export async function settleCanonicalCorvetteStrike(
             data: { corvetteStrikePhase: returning ? 'RETURNING' : 'COMPLETE', status: returning ? 'RETURNING' : 'COMPLETE', returnsAt },
           });
           if (transition.count !== 1) return 'noop';
-          await tx.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: origin.ownerId, defenderId: target.ownerId, createdAt: currentTime, resolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, resultSnapshot: result } });
+          await tx.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: origin.ownerId, defenderId: target.ownerId, createdAt: currentTime, resolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, resultSnapshot: reportSnapshot } });
           await tx.notification.create({ data: { userId: origin.ownerId, type: 'CORVETTE_STRIKE_RESOLVED', message: 'Your Corvette strike result is ready.' } });
           await tx.notification.create({ data: { userId: target.ownerId, type: 'CORVETTE_STRIKE_UNDER_ATTACK', message: 'A Corvette strike reached one of your planets.' } });
           return returning ? 'arrived' : 'arrived';

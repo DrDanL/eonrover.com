@@ -14,6 +14,8 @@ import { settleCanonicalTransport } from '../services/transportCompletionService
 import { TransportLaunchError, launchCanonicalTransport } from '../services/transportLaunchService';
 import { settleCanonicalEspionageProbe } from '../services/espionageProbeCompletionService';
 import { EspionageProbeLaunchError, launchCanonicalEspionageProbe } from '../services/espionageProbeLaunchService';
+import { settleCanonicalCorvetteStrike } from '../services/corvetteStrikeCompletionService';
+import { CorvetteStrikeLaunchError, launchCanonicalCorvetteStrike } from '../services/corvetteStrikeLaunchService';
 
 const router = Router();
 router.use(requireAuth);
@@ -51,6 +53,16 @@ const espionageLaunchSchema = z.object({
     system: safeCoordinate,
     slot: safeCoordinate,
   }).strict(),
+}).strict();
+const strikeQuerySchema = z.object({ originPlanetId: z.string().uuid() });
+const strikeLaunchSchema = z.object({
+  originPlanetId: z.string().uuid(),
+  target: z.object({
+    galaxy: safeCoordinate,
+    system: safeCoordinate,
+    slot: safeCoordinate,
+  }).strict(),
+  corvettes: z.number().int().min(1).max(100).refine(Number.isSafeInteger),
 }).strict();
 
 // Deploy planning accepts integer percentages from 10 through 100. These are
@@ -148,6 +160,27 @@ type EspionageMissionForPresentation = Pick<FleetMission,
   espionageProbeReport: { id: string } | null;
 };
 
+type SafeStrikeMission = {
+  phase: 'OUTBOUND' | 'RETURNING';
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  departedAt: Date;
+  arrivesAt: Date;
+  returnsAt: Date;
+};
+
+type StrikeMissionForPresentation = Pick<FleetMission,
+  'id' | 'originId' | 'targetId' | 'targetGalaxy' | 'targetSystem' | 'targetSlot'
+  | 'missionType' | 'status' | 'speedPercent' | 'departedAt' | 'arrivesAt' | 'returnsAt'
+  | 'corvetteStrikeOriginPlanetId' | 'corvetteStrikeTargetPlanetId'
+  | 'corvetteStrikeAttackerId' | 'corvetteStrikeDefenderId' | 'corvetteStrikeShips'
+  | 'corvetteStrikeOutboundFuelHeliox' | 'corvetteStrikeReturnFuelHeliox'
+  | 'corvetteStrikeOutboundDurationSeconds' | 'corvetteStrikeReturnDurationSeconds'
+  | 'corvetteStrikePhase'
+> & {
+  corvetteStrikeOriginPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
+  corvetteStrikeTargetPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -172,6 +205,12 @@ function safeTransporterManifest(value: unknown): { transporter: number } | null
 function safeProbeManifest(value: unknown): { probe: 1 } | null {
   if (!isRecord(value) || Object.keys(value).length !== 1 || value.probe !== 1) return null;
   return { probe: 1 };
+}
+
+function safeCorvetteManifest(value: unknown): { corvette: number } | null {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || typeof value.corvette !== 'number') return null;
+  if (!Number.isSafeInteger(value.corvette) || value.corvette < 1 || value.corvette > 100) return null;
+  return { corvette: value.corvette };
 }
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
@@ -541,6 +580,94 @@ function sendEspionageLaunchError(res: Parameters<RequestHandler>[1], error: Esp
   }
 }
 
+function strikeSelect() {
+  return {
+    id: true, originId: true, targetId: true, targetGalaxy: true, targetSystem: true, targetSlot: true,
+    missionType: true, status: true, speedPercent: true, departedAt: true, arrivesAt: true, returnsAt: true,
+    corvetteStrikeOriginPlanetId: true, corvetteStrikeTargetPlanetId: true,
+    corvetteStrikeAttackerId: true, corvetteStrikeDefenderId: true, corvetteStrikeShips: true,
+    corvetteStrikeOutboundFuelHeliox: true, corvetteStrikeReturnFuelHeliox: true,
+    corvetteStrikeOutboundDurationSeconds: true, corvetteStrikeReturnDurationSeconds: true,
+    corvetteStrikePhase: true,
+    corvetteStrikeOriginPlanet: { select: { id: true, ownerId: true, galaxy: true, system: true, slot: true } },
+    corvetteStrikeTargetPlanet: { select: { id: true, ownerId: true, galaxy: true, system: true, slot: true } },
+  } as const;
+}
+
+async function activeStrikeForOrigin(originPlanetId: string, accountId: string): Promise<StrikeMissionForPresentation | null> {
+  return prisma.fleetMission.findFirst({
+    where: {
+      missionType: MissionType.ATTACK,
+      status: { in: [MissionStatus.OUTBOUND, MissionStatus.RETURNING] },
+      corvetteStrikeOriginPlanetId: originPlanetId,
+      corvetteStrikeAttackerId: accountId,
+      corvetteStrikeTargetPlanetId: { not: null },
+      corvetteStrikeDefenderId: { not: null },
+      corvetteStrikePhase: { in: ['OUTBOUND', 'RETURNING'] },
+    },
+    orderBy: [{ arrivesAt: 'asc' }, { id: 'asc' }],
+    select: strikeSelect(),
+  });
+}
+
+function presentStrike(mission: StrikeMissionForPresentation, accountId: string, originPlanetId: string): SafeStrikeMission | null {
+  const origin = mission.corvetteStrikeOriginPlanet;
+  const target = mission.corvetteStrikeTargetPlanet;
+  const phase = mission.corvetteStrikePhase;
+  const expectedStatus = phase === 'OUTBOUND' ? MissionStatus.OUTBOUND : MissionStatus.RETURNING;
+  if (
+    mission.missionType !== MissionType.ATTACK
+    || (phase !== 'OUTBOUND' && phase !== 'RETURNING')
+    || mission.status !== expectedStatus
+    || !origin || !target
+    || origin.id !== originPlanetId || origin.ownerId !== accountId || target.ownerId === accountId
+    || mission.originId !== origin.id || mission.targetId !== target.id
+    || mission.corvetteStrikeOriginPlanetId !== origin.id || mission.corvetteStrikeTargetPlanetId !== target.id
+    || mission.corvetteStrikeAttackerId !== accountId || mission.corvetteStrikeDefenderId !== target.ownerId
+    || mission.targetGalaxy !== target.galaxy || mission.targetSystem !== target.system || mission.targetSlot !== target.slot
+    || mission.speedPercent !== 100 || !safeCorvetteManifest(mission.corvetteStrikeShips)
+    || !isSafeNonNegativeInteger(mission.corvetteStrikeOutboundFuelHeliox)
+    || !isSafeNonNegativeInteger(mission.corvetteStrikeReturnFuelHeliox)
+    || !isSafeNonNegativeInteger(mission.corvetteStrikeOutboundDurationSeconds) || mission.corvetteStrikeOutboundDurationSeconds <= 0
+    || !isSafeNonNegativeInteger(mission.corvetteStrikeReturnDurationSeconds) || mission.corvetteStrikeReturnDurationSeconds <= 0
+    || !Number.isFinite(mission.departedAt.getTime()) || !Number.isFinite(mission.arrivesAt.getTime())
+    || !mission.returnsAt || !Number.isFinite(mission.returnsAt.getTime())
+    || mission.arrivesAt.getTime() - mission.departedAt.getTime() !== mission.corvetteStrikeOutboundDurationSeconds * 1_000
+  ) return null;
+  return {
+    phase,
+    target: { coordinates: { galaxy: target.galaxy, system: target.system, slot: target.slot } },
+    departedAt: mission.departedAt,
+    arrivesAt: mission.arrivesAt,
+    returnsAt: mission.returnsAt,
+  };
+}
+
+function sendStrikeLaunchError(res: Parameters<RequestHandler>[1], error: CorvetteStrikeLaunchError): void {
+  switch (error.code) {
+    case 'ORIGIN_NOT_OWNED':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
+      return;
+    case 'INVALID_TARGET':
+      sendError(res, 400, ERROR_CODES.BAD_REQUEST, error.message);
+      return;
+    case 'TARGET_UNAVAILABLE':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Strike target not found');
+      return;
+    case 'TARGET_PROTECTED':
+    case 'STRIKE_IN_PROGRESS':
+    case 'INSUFFICIENT_CORVETTES':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'INSUFFICIENT_HELIOX':
+      sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, error.message);
+      return;
+    case 'STRIKE_UNAVAILABLE':
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message);
+      return;
+  }
+}
+
 function sendLaunchError(res: Parameters<RequestHandler>[1], error: DeployLaunchError): void {
   switch (error.code) {
     case 'ORIGIN_NOT_OWNED':
@@ -860,6 +987,65 @@ router.post('/colonizations', asyncHandler(async (req, res) => {
     });
   } catch (error) {
     if (error instanceof ColonizationLaunchError) { sendColonizationLaunchError(res, error); return; }
+    throw error;
+  }
+}));
+
+router.get('/strikes', asyncHandler(async (req, res) => {
+  const parsed = strikeQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  const origin = await prisma.planet.findUnique({ where: { id: parsed.data.originPlanetId } });
+  if (!origin || origin.ownerId !== req.user!.id) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+
+  const now = new Date();
+  const pending = await activeStrikeForOrigin(origin.id, req.user!.id);
+  if (pending) {
+    const completion = await settleCanonicalCorvetteStrike(pending.id, now);
+    if (completion === 'unavailable') {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Strike state could not be refreshed. Please try again.');
+      return;
+    }
+  }
+
+  const [{ planet: settledOrigin }, corvettes, active] = await Promise.all([
+    syncPlanetResources(origin.id, now),
+    prisma.ship.findUnique({
+      where: { planetId_key: { planetId: origin.id, key: 'corvette' } },
+      select: { count: true },
+    }),
+    activeStrikeForOrigin(origin.id, req.user!.id),
+  ]);
+  res.json({
+    selectedOrigin: {
+      coordinates: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+      heliox: settledOrigin.heliox,
+      availableCorvettes: corvettes?.count ?? 0,
+    },
+    activeStrike: active ? presentStrike(active, req.user!.id, origin.id) : null,
+  });
+}));
+
+router.post('/strikes', asyncHandler(async (req, res) => {
+  const parsed = strikeLaunchSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  try {
+    const accepted = await launchCanonicalCorvetteStrike({
+      userId: req.user!.id,
+      originPlanetId: parsed.data.originPlanetId,
+      target: parsed.data.target,
+      quantity: parsed.data.corvettes,
+    });
+    const active = await activeStrikeForOrigin(accepted.originPlanetId, req.user!.id);
+    const presentation = active ? presentStrike(active, req.user!.id, accepted.originPlanetId) : null;
+    // A completed PostgreSQL reservation remains accepted even when Redis could
+    // not receive its post-commit wake-up. Reconciliation owns that recovery.
+    if (!presentation) {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Strike state could not be refreshed. Please try again.');
+      return;
+    }
+    res.status(201).json({ activeStrike: presentation });
+  } catch (error) {
+    if (error instanceof CorvetteStrikeLaunchError) { sendStrikeLaunchError(res, error); return; }
     throw error;
   }
 }));

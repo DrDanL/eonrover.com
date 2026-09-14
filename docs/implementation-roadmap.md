@@ -445,7 +445,7 @@ Do not proceed to the systems below until all of these are true:
 
 ## Stage 12 — new-player protection, espionage, combat, debris, and recycling
 
-**Stage 12B1–B6 status:** fixed-speed Corvette strikes now have a deterministic resolver, canonical persistence, authoritative launch/resolution/return transactions, post-commit deterministic wake-ups, a dedicated worker processor, and startup plus 30-second bounded recovery. Player access, loot, cargo, debris, raids, recalls, and generic Fleet combat remain unavailable.
+**Stage 12B1–B6 status:** fixed-speed Corvette strikes now have a deterministic resolver, canonical persistence, authoritative launch/resolution/return transactions, post-commit deterministic wake-ups, a dedicated worker processor, and startup plus 30-second bounded recovery. **Stage 12C1 status:** authenticated players can use narrow coordinate-only strike command reads/launches and read only their own immutable, allowlisted canonical strike reports. Player strike controls, loot, cargo, debris, raids, recalls, and generic Fleet combat remain unavailable.
 
 **Objective:** Enable adversarial play only after server invariants and recovery are proven.
 
