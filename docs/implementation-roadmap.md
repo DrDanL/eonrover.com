@@ -445,6 +445,8 @@ Do not proceed to the systems below until all of these are true:
 
 ## Stage 12 — new-player protection, espionage, combat, debris, and recycling
 
+**Stage 12B1–B3 status:** fixed-speed Corvette strike planning and a versioned deterministic resolver are prepared; nullable canonical strike/report persistence and the internal PostgreSQL-authoritative launch reservation are implemented. Arrival combat resolution, reports, queues, workers, reconciliation, player access, loot, debris, raids, and recalls remain unavailable.
+
 **Objective:** Enable adversarial play only after server invariants and recovery are proven.
 
 **Why this comes next:** These actions can destroy or transfer player value, so they carry the highest fairness and concurrency risk.

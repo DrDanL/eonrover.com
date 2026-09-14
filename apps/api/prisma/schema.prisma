@@ -52,6 +52,10 @@ model User {
   espionageOriginMissions FleetMission[] @relation("EspionageOriginAccount")
   espionageTargetMissions FleetMission[] @relation("EspionageTargetAccount")
   espionageProbeReports EspionageProbeReport[] @relation("EspionageProbeReportAttacker")
+  corvetteStrikeOriginMissions FleetMission[] @relation("CorvetteStrikeAttacker")
+  corvetteStrikeDefenderMissions FleetMission[] @relation("CorvetteStrikeDefender")
+  corvetteStrikeReportsAttacker CorvetteStrikeReport[] @relation("CorvetteStrikeReportAttacker")
+  corvetteStrikeReportsDefender CorvetteStrikeReport[] @relation("CorvetteStrikeReportDefender")
 
   @@index([status])
 }
@@ -132,6 +136,8 @@ model Planet {
   espionageOriginMissions FleetMission[] @relation("EspionageOriginPlanet")
   espionageTargetMissions FleetMission[] @relation("EspionageTargetPlanet")
   espionageProbeReports EspionageProbeReport[] @relation("EspionageProbeReportTarget")
+  corvetteStrikeOriginMissions FleetMission[] @relation("CorvetteStrikeOriginPlanet")
+  corvetteStrikeTargetMissions FleetMission[] @relation("CorvetteStrikeTargetPlanet")
   createdByColonization FleetMission? @relation("ColonizationCreatedPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
@@ -281,6 +287,12 @@ enum EspionageProbeMissionPhase {
   COMPLETE
 }
 
+enum CorvetteStrikePhase {
+  OUTBOUND
+  RETURNING
+  COMPLETE
+}
+
 // Canonical Probe report disclosure tiers. This separate enum and report model
 // deliberately do not reinterpret legacy EspionageReport rows or their raw
 // accuracy/data payloads.
@@ -354,6 +366,26 @@ model FleetMission {
   espionageReturnDurationSeconds Int?
   espionageProbePhase EspionageProbeMissionPhase?
   espionageProbeReport EspionageProbeReport?
+  // Stage 12B canonical Corvette-strike fields. Legacy ATTACK rows leave
+  // these nullable snapshots unset and remain non-canonical.
+  corvetteStrikeOriginPlanetId String?
+  corvetteStrikeOriginPlanet Planet? @relation("CorvetteStrikeOriginPlanet", fields: [corvetteStrikeOriginPlanetId], references: [id], onDelete: SetNull)
+  corvetteStrikeTargetPlanetId String?
+  corvetteStrikeTargetPlanet Planet? @relation("CorvetteStrikeTargetPlanet", fields: [corvetteStrikeTargetPlanetId], references: [id], onDelete: SetNull)
+  corvetteStrikeAttackerId String?
+  corvetteStrikeAttacker User? @relation("CorvetteStrikeAttacker", fields: [corvetteStrikeAttackerId], references: [id], onDelete: SetNull)
+  corvetteStrikeDefenderId String?
+  corvetteStrikeDefender User? @relation("CorvetteStrikeDefender", fields: [corvetteStrikeDefenderId], references: [id], onDelete: SetNull)
+  corvetteStrikeShips Json?
+  corvetteStrikeOutboundFuelHeliox Int?
+  corvetteStrikeReturnFuelHeliox Int?
+  corvetteStrikeOutboundDurationSeconds Int?
+  corvetteStrikeReturnDurationSeconds Int?
+  corvetteStrikeResolverVersion String?
+  corvetteStrikeResolverSeed String?
+  corvetteStrikeAttackerTechnology Json?
+  corvetteStrikePhase CorvetteStrikePhase?
+  corvetteStrikeReport CorvetteStrikeReport?
   // Stage 9B canonical colonisation fields. Existing generic COLONIZE rows
   // remain legacy data unless all future lifecycle code explicitly supplies
   // these snapshots.
@@ -382,6 +414,12 @@ model FleetMission {
   @@index([espionageTargetAccountId])
   @@index([espionageProbePhase, arrivesAt])
   @@index([espionageProbePhase, returnsAt])
+  @@index([corvetteStrikeOriginPlanetId, corvetteStrikePhase])
+  @@index([corvetteStrikeTargetPlanetId])
+  @@index([corvetteStrikeAttackerId])
+  @@index([corvetteStrikeDefenderId])
+  @@index([corvetteStrikePhase, arrivesAt])
+  @@index([corvetteStrikePhase, returnsAt])
   @@index([colonizationAccountId])
 }
 
@@ -429,6 +467,22 @@ model EspionageProbeReport {
 
   @@index([attackerId, createdAt])
   @@index([targetPlanetId])
+}
+
+model CorvetteStrikeReport {
+  id              String @id @default(uuid())
+  missionId       String @unique
+  mission         FleetMission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  attackerId      String
+  attacker        User @relation("CorvetteStrikeReportAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
+  defenderId      String
+  defender        User @relation("CorvetteStrikeReportDefender", fields: [defenderId], references: [id], onDelete: Cascade)
+  createdAt       DateTime
+  resolverVersion String
+  resultSnapshot  Json
+
+  @@index([attackerId, createdAt])
+  @@index([defenderId, createdAt])
 }
 
 model DebrisField {
