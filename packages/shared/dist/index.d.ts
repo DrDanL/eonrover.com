@@ -8,6 +8,7 @@ export * from './planetFields';
 export * from './researchCatalogue';
 export * from './researchCompletion';
 export * from './shipyardCatalogue';
+export * from './defenceCatalogue';
 export * from './shipyardCompletion';
 export * from './transportMission';
 export * from './transportArrivalScheduling';

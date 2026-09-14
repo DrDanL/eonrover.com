@@ -3,7 +3,7 @@ import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { SESSION_COOKIE, sessionTokenDigest } from '../lib/auth';
 import { shipyardQueue } from '../lib/redis';
-import { completeShipyardBatch } from '@eonrover/shared';
+import { completeShipyardBatch, planCorvetteStrike, settleCanonicalCorvetteStrike } from '@eonrover/shared';
 
 const app = createApp();
 let slot = 700;
@@ -64,7 +64,7 @@ describe('read-only Shipyard catalogue', () => {
   it('starts one canonical batch with snapshots, ignores spoofed values, and cancels with one 50% refund', async () => {
     const owner = await player('shipyard-start');
     await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10000, heliox: 10000, aether: 10000 } });
-    const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 2, cost: { alloy: 1 }, durationSeconds: 1, completesAt: '1970-01-01', statistics: { speed: 1 } }).expect(201);
+    const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 2 }).expect(201);
     expect(started.body.queueItem).toMatchObject({ shipKey: 'scout', shipName: 'Scout', quantity: 2, cost: { alloy: 4000, heliox: 2000, aether: 0 }, durationSeconds: 900, status: 'PENDING' });
     expect(JSON.stringify(started.body)).not.toContain('jobId');
     const stored = await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: started.body.queueItem.id } });
@@ -80,6 +80,7 @@ describe('read-only Shipyard catalogue', () => {
     const owner = await player('shipyard-rules'); const other = await player('shipyard-rules-other');
     await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 100000, heliox: 100000, aether: 100000 } });
     await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'unknown', quantity: 1 }).expect(400);
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 1, cost: { alloy: 1 } }).expect(400);
     await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 0 }).expect(400);
     await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'scout', quantity: 101 }).expect(400);
     await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'colonyShip', quantity: 1 }).expect(409);
@@ -168,5 +169,53 @@ describe('read-only Shipyard catalogue', () => {
     expect(await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'scout' } } })).toMatchObject({ count: 2 });
     expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
     expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: before.alloy, heliox: before.heliox });
+  });
+
+  it('starts, cancels, and completes only a canonical Flak Turret batch', async () => {
+    const owner = await player('shipyard-flak');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, aether: 1_000, lastProductionAt: new Date() } });
+    const rejectedLegacy = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(400);
+    expect(rejectedLegacy.body.code).toBe('BAD_REQUEST');
+    expect(await prisma.shipyardQueueItem.count()).toBe(0);
+
+    const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'flakTurret', quantity: 2 }).expect(201);
+    const queueItem = await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: started.body.queueItem.id } });
+    expect(queueItem).toMatchObject({ itemKey: 'flakTurret', itemType: 'defence', canonicalDefenceKey: 'flakTurret', quantity: 2, costAlloy: 4000, costHeliox: 0, costAether: 0, durationSeconds: 600 });
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: 6000, heliox: 5000, aether: 1000 });
+
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${queueItem.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: 8000, heliox: 5000, aether: 1000 });
+
+    const accepted = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'flakTurret', quantity: 2 }).expect(201);
+    await prisma.shipyardQueueItem.update({ where: { id: accepted.body.queueItem.id }, data: { completesAt: new Date(Date.now() - 1) } });
+    await Promise.all([completeShipyardBatch(prisma, accepted.body.queueItem.id), completeShipyardBatch(prisma, accepted.body.queueItem.id)]);
+    expect(await prisma.defence.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'flakTurret' } } })).toMatchObject({ count: 2 });
+    expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
+  });
+
+  it('contains legacy defence rows and includes a completed canonical Flak Turret in an immutable strike report', async () => {
+    const defender = await player('shipyard-flak-defender');
+    const attacker = await player('shipyard-flak-attacker');
+    await prisma.planet.update({ where: { id: defender.planet.id }, data: { galaxy: 1, system: 1, slot: 1 } });
+    await prisma.planet.update({ where: { id: attacker.planet.id }, data: { galaxy: 1, system: 1, slot: 2 } });
+    defender.planet = await prisma.planet.findUniqueOrThrow({ where: { id: defender.planet.id } });
+    attacker.planet = await prisma.planet.findUniqueOrThrow({ where: { id: attacker.planet.id } });
+    await prisma.shipyardQueueItem.create({ data: { planetId: defender.planet.id, itemKey: 'railBattery', itemType: 'defence', quantity: 99, remaining: 99, costAlloy: 1, costHeliox: 1, costAether: 1, durationSeconds: 1, completesAt: new Date(Date.now() - 1) } });
+    const legacy = await prisma.shipyardQueueItem.findFirstOrThrow({ where: { planetId: defender.planet.id } });
+    expect(await completeShipyardBatch(prisma, legacy.id)).toBe('missing');
+    expect(await prisma.defence.count({ where: { planetId: defender.planet.id } })).toBe(0);
+    await prisma.shipyardQueueItem.update({ where: { id: legacy.id }, data: { status: 'CANCELLED' } });
+
+    await prisma.planet.update({ where: { id: defender.planet.id }, data: { alloy: 20_000, heliox: 20_000, aether: 20_000, lastProductionAt: new Date() } });
+    const flak = await request(app).post(`/api/planets/${defender.planet.id}/shipyard`).set('Cookie', defender.cookie).set('X-Eonrover-Client', '1').send({ key: 'flakTurret', quantity: 1 }).expect(201);
+    await prisma.shipyardQueueItem.update({ where: { id: flak.body.queueItem.id }, data: { completesAt: new Date(Date.now() - 1) } });
+    expect(await completeShipyardBatch(prisma, flak.body.queueItem.id)).toBe('completed');
+
+    await prisma.ship.create({ data: { planetId: attacker.planet.id, key: 'corvette', count: 3 } });
+    const now = new Date(); const plan = planCorvetteStrike({ origin: { galaxy: attacker.planet.galaxy, system: attacker.planet.system, slot: attacker.planet.slot }, target: { galaxy: defender.planet.galaxy, system: defender.planet.system, slot: defender.planet.slot }, quantity: 3, fleetSpeed: 1 });
+    const arrivesAt = new Date(now.getTime() - 1);
+    const mission = await prisma.fleetMission.create({ data: { originId: attacker.planet.id, targetId: defender.planet.id, targetGalaxy: defender.planet.galaxy, targetSystem: defender.planet.system, targetSlot: defender.planet.slot, missionType: 'ATTACK', ships: { legacy: 'ignored' }, cargo: { alloy: 0, heliox: 0, aether: 0 }, speedPercent: 100, departedAt: new Date(arrivesAt.getTime() - plan.outboundDurationSeconds * 1000), arrivesAt, returnsAt: new Date(now.getTime() + plan.returnDurationSeconds * 1000), status: 'OUTBOUND', corvetteStrikeOriginPlanetId: attacker.planet.id, corvetteStrikeTargetPlanetId: defender.planet.id, corvetteStrikeAttackerId: attacker.user.id, corvetteStrikeDefenderId: defender.user.id, corvetteStrikeShips: { corvette: 3 }, corvetteStrikeOutboundFuelHeliox: plan.outboundFuelHeliox, corvetteStrikeReturnFuelHeliox: plan.returnFuelHeliox, corvetteStrikeOutboundDurationSeconds: plan.outboundDurationSeconds, corvetteStrikeReturnDurationSeconds: plan.returnDurationSeconds, corvetteStrikeResolverVersion: 'corvette-strike-v1', corvetteStrikeResolverSeed: 'f'.repeat(64), corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: 'OUTBOUND' } });
+    expect(await settleCanonicalCorvetteStrike(prisma, mission.id, now)).toBe('arrived');
+    expect((await prisma.corvetteStrikeReport.findUniqueOrThrow({ where: { missionId: mission.id } }).then((report) => report.resultSnapshot as any)).starting.defender.flakTurret).toBe(1);
   });
 });

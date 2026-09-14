@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { z } from 'zod';
-import { SHIPS, SHIPYARD_BY_ID, SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, ShipKey, completeDueShipyardForPlanet, completeShipyardBatch, evaluateShipyardCatalogue, shipyardDurationForCatalogue } from '@eonrover/shared';
+import { DEFENCES, isActiveShipyardDefenceKey, SHIPS, SHIPYARD_BY_ID, SHIPYARD_CATEGORIES, SHIPYARD_CATALOGUE, ShipKey, completeDueShipyardForPlanet, completeShipyardBatch, evaluateShipyardCatalogue, shipyardDurationForCatalogue } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { shipyardQueue } from '../lib/redis';
 import { requireAuth } from '../middleware/auth';
@@ -13,7 +13,7 @@ const router = Router({ mergeParams: true });
 router.use(requireAuth);
 const MAX_SHIPYARD_BATCH_QUANTITY = 100;
 const TRANSACTION_ATTEMPTS = 3;
-const startSchema = z.object({ key: z.string(), quantity: z.number().int().min(1).max(MAX_SHIPYARD_BATCH_QUANTITY) });
+const startSchema = z.object({ key: z.string(), quantity: z.number().int().min(1).max(MAX_SHIPYARD_BATCH_QUANTITY) }).strict();
 
 function isSerializationFailure(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2034' || (error.code === 'P2010' && error.meta?.code === '40001'));
@@ -23,9 +23,10 @@ async function assertOwnedPlanet(planetId: string, userId: string) {
   return planet?.ownerId === userId ? planet : null;
 }
 function shipyardJobId(queueItemId: string): string { return `ship-${queueItemId}`; }
-function presentQueueItem(item: { id: string; itemKey: string; quantity: number; costAlloy: number; costHeliox: number; costAether: number; durationSeconds: number; startedAt: Date; completesAt: Date; status: string }) {
+function presentQueueItem(item: { id: string; itemKey: string; itemType: string; canonicalDefenceKey?: string | null; quantity: number; costAlloy: number; costHeliox: number; costAether: number; durationSeconds: number; startedAt: Date; completesAt: Date; status: string }) {
   const ship = SHIPYARD_BY_ID[item.itemKey as ShipKey];
-  return { id: item.id, shipKey: item.itemKey, shipName: ship ? SHIPS[ship.id].name : item.itemKey, quantity: item.quantity, cost: { alloy: item.costAlloy, heliox: item.costHeliox, aether: item.costAether }, durationSeconds: item.durationSeconds, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status, cancellation: { refundPercentage: 50, refund: { alloy: Math.round(item.costAlloy * 0.5), heliox: Math.round(item.costHeliox * 0.5), aether: Math.round(item.costAether * 0.5) } } };
+  const defence = item.itemType === 'defence' && item.canonicalDefenceKey === item.itemKey && isActiveShipyardDefenceKey(item.itemKey) ? DEFENCES[item.itemKey] : undefined;
+  return { id: item.id, shipKey: item.itemKey, shipName: ship ? SHIPS[ship.id].name : defence?.name ?? item.itemKey, quantity: item.quantity, cost: { alloy: item.costAlloy, heliox: item.costHeliox, aether: item.costAether }, durationSeconds: item.durationSeconds, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status, cancellation: { refundPercentage: 50, refund: { alloy: Math.round(item.costAlloy * 0.5), heliox: Math.round(item.costHeliox * 0.5), aether: Math.round(item.costAether * 0.5) } } };
 }
 async function scheduleShipyardWakeup(item: { id: string; quantity: number; durationSeconds: number; completesAt: Date }): Promise<boolean> {
   const jobId = shipyardJobId(item.id);
@@ -45,15 +46,17 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   ]);
   const buildingLevels = Object.fromEntries(buildings.map((building) => [building.key, building.level]));
   const researchLevels = Object.fromEntries(research.map((row) => [row.key, row.level]));
-  const active = queue.find((item) => item.status === 'PENDING' && item.itemType === 'ship');
+  const active = queue.find((item) => item.status === 'PENDING' && (item.itemType === 'ship' || (item.itemType === 'defence' && item.canonicalDefenceKey === 'flakTurret' && item.itemKey === 'flakTurret')));
   res.json({ selectedPlanet: { id: settled.id, name: settled.name, shipyardLevel: buildingLevels.shipyard ?? 0, resources: { alloy: settled.alloy, heliox: settled.heliox, aether: settled.aether } }, categories: SHIPYARD_CATEGORIES, catalog: SHIPYARD_CATALOGUE.map((entry) => ({ ...evaluateShipyardCatalogue({ id: entry.id, shipyardLevel: buildingLevels.shipyard ?? 0, economySpeed: config.economySpeed, buildingLevels, researchLevels }), owned: ships.find((ship) => ship.key === entry.id)?.count ?? 0 })), activeQueue: active ? presentQueueItem(active) : null, legacyQueue: queue.filter((item) => item.id !== active?.id).map((item) => ({ id: item.id, itemKey: item.itemKey, itemType: item.itemType, quantity: item.quantity, remaining: item.remaining, startedAt: item.startedAt, completesAt: item.completesAt, status: item.status })) });
 }));
 
 router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const parsed = startSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error); return; }
-  if (!(parsed.data.key in SHIPYARD_BY_ID)) { sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'Unknown ship'); return; }
-  const key = parsed.data.key as ShipKey;
+  const isShip = parsed.data.key in SHIPYARD_BY_ID;
+  const isFlak = isActiveShipyardDefenceKey(parsed.data.key);
+  if (!isShip && !isFlak) { sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.'); return; }
+  const key = parsed.data.key as ShipKey | 'flakTurret';
   if (!await assertOwnedPlanet(req.params.planetId, req.user!.id)) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
   const config = await getUniverseConfig(); const startedAt = new Date();
   await completeDueShipyardForPlanet(prisma, req.params.planetId, startedAt);
@@ -70,9 +73,8 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         if (!planet || planet.ownerId !== account.id) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Planet not found');
         await tx.$queryRaw`SELECT "id" FROM "ShipyardQueueItem" WHERE "planetId" = ${planet.id} AND "status" = 'PENDING' FOR UPDATE`;
         if (await tx.shipyardQueueItem.findFirst({ where: { planetId: planet.id, status: 'PENDING' }, select: { id: true } })) throw new AppError(409, ERROR_CODES.CONSTRUCTION_IN_PROGRESS, 'Ship construction is already in progress on this planet.');
-        const definition = SHIPS[key];
-        // Stage 7A catalogue keys all have a supported persisted Ship inventory.
-        if (!definition) throw new AppError(400, ERROR_CODES.BAD_REQUEST, 'Unknown ship');
+        const definition = isFlak ? DEFENCES.flakTurret : SHIPS[key as ShipKey];
+        if (!definition) throw new AppError(400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.');
         const buildings = await tx.building.findMany({ where: { planetId: planet.id } });
         const buildingLevels = Object.fromEntries(buildings.map((row) => [row.key, row.level]));
         const researchRows = await tx.research.findMany({ where: { userId: account.id } });
@@ -85,7 +87,7 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         const durationSeconds = shipyardDurationForCatalogue(definition.buildTimeSeconds, buildingLevels.shipyard ?? 0, config.economySpeed) * parsed.data.quantity;
         const completesAt = new Date(startedAt.getTime() + durationSeconds * 1000);
         await tx.planet.update({ where: { id: planet.id }, data: { alloy: synced.planet.alloy - cost.alloy, heliox: synced.planet.heliox - cost.heliox, aether: synced.planet.aether - cost.aether } });
-        return tx.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: key, itemType: 'ship', quantity: parsed.data.quantity, remaining: parsed.data.quantity, costAlloy: cost.alloy, costHeliox: cost.heliox, costAether: cost.aether, durationSeconds, startedAt, completesAt } });
+        return tx.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: key, itemType: isFlak ? 'defence' : 'ship', canonicalDefenceKey: isFlak ? 'flakTurret' : null, quantity: parsed.data.quantity, remaining: parsed.data.quantity, costAlloy: cost.alloy, costHeliox: cost.heliox, costAether: cost.aether, durationSeconds, startedAt, completesAt } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       break;
     } catch (error) {

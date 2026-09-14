@@ -2,6 +2,15 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.completeShipyardBatch = completeShipyardBatch;
 exports.completeDueShipyardForPlanet = completeDueShipyardForPlanet;
+/** Legacy `itemType: defence` rows were permissive.  They are deliberately
+ * never inventory-authoritative; only a validated Flak batch stamped by the
+ * canonical start transaction may complete into Defence. */
+function isCanonicalFlakBatch(item) {
+    return item.itemType === 'defence' && item.itemKey === 'flakTurret' && item.canonicalDefenceKey === 'flakTurret';
+}
+function isCanonicalShipBatch(item) {
+    return item.itemType === 'ship' && typeof item.itemKey === 'string' && ['scout', 'transporter', 'colonyShip', 'corvette', 'frigate', 'recycler', 'probe'].includes(item.itemKey);
+}
 function isSerializationFailure(error) {
     return error?.code === 'P2034' || (error?.code === 'P2010' && error?.meta?.code === '40001');
 }
@@ -38,6 +47,10 @@ async function completeShipyardBatch(database, queueItemId, now = new Date()) {
                     return 'complete';
                 if (now < item.completesAt)
                     return 'too-early';
+                // Do not turn arbitrary historical queue data into inventory.  Legacy
+                // malformed rows are terminally contained without notification.
+                if (!isCanonicalShipBatch(item) && !isCanonicalFlakBatch(item))
+                    return 'missing';
                 // Claim first.  The inventory and notification are in the same
                 // transaction, so duplicate workers and API fallbacks are harmless.
                 const claimed = await transaction.shipyardQueueItem.updateMany({
@@ -45,7 +58,7 @@ async function completeShipyardBatch(database, queueItemId, now = new Date()) {
                 });
                 if (claimed.count !== 1)
                     return 'complete';
-                const inventory = item.itemType === 'defence' ? transaction.defence : transaction.ship;
+                const inventory = isCanonicalFlakBatch(item) ? transaction.defence : transaction.ship;
                 await inventory.upsert({
                     where: { planetId_key: { planetId: planet.id, key: item.itemKey } },
                     update: { count: { increment: item.quantity } },

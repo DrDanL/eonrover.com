@@ -24,6 +24,7 @@ __exportStar(require("./planetFields"), exports);
 __exportStar(require("./researchCatalogue"), exports);
 __exportStar(require("./researchCompletion"), exports);
 __exportStar(require("./shipyardCatalogue"), exports);
+__exportStar(require("./defenceCatalogue"), exports);
 __exportStar(require("./shipyardCompletion"), exports);
 __exportStar(require("./transportMission"), exports);
 __exportStar(require("./transportArrivalScheduling"), exports);

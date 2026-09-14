@@ -7,6 +7,17 @@ export interface ShipyardCompletionDatabase {
 
 export type ShipyardCompletionResult = 'missing' | 'cancelled' | 'complete' | 'too-early' | 'completed';
 
+/** Legacy `itemType: defence` rows were permissive.  They are deliberately
+ * never inventory-authoritative; only a validated Flak batch stamped by the
+ * canonical start transaction may complete into Defence. */
+function isCanonicalFlakBatch(item: { itemType: unknown; itemKey: unknown; canonicalDefenceKey?: unknown }): boolean {
+  return item.itemType === 'defence' && item.itemKey === 'flakTurret' && item.canonicalDefenceKey === 'flakTurret';
+}
+
+function isCanonicalShipBatch(item: { itemType: unknown; itemKey: unknown }): boolean {
+  return item.itemType === 'ship' && typeof item.itemKey === 'string' && ['scout', 'transporter', 'colonyShip', 'corvette', 'frigate', 'recycler', 'probe'].includes(item.itemKey);
+}
+
 function isSerializationFailure(error: any): boolean {
   return error?.code === 'P2034' || (error?.code === 'P2010' && error?.meta?.code === '40001');
 }
@@ -46,6 +57,10 @@ export async function completeShipyardBatch(
         if (item.status === 'COMPLETE') return 'complete';
         if (now < item.completesAt) return 'too-early';
 
+        // Do not turn arbitrary historical queue data into inventory.  Legacy
+        // malformed rows are terminally contained without notification.
+        if (!isCanonicalShipBatch(item) && !isCanonicalFlakBatch(item)) return 'missing';
+
         // Claim first.  The inventory and notification are in the same
         // transaction, so duplicate workers and API fallbacks are harmless.
         const claimed = await transaction.shipyardQueueItem.updateMany({
@@ -53,7 +68,7 @@ export async function completeShipyardBatch(
         });
         if (claimed.count !== 1) return 'complete';
 
-        const inventory = item.itemType === 'defence' ? transaction.defence : transaction.ship;
+        const inventory = isCanonicalFlakBatch(item) ? transaction.defence : transaction.ship;
         await inventory.upsert({
           where: { planetId_key: { planetId: planet.id, key: item.itemKey } },
           update: { count: { increment: item.quantity } },

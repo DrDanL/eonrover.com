@@ -226,6 +226,10 @@ model ShipyardQueueItem {
   planet      Planet      @relation(fields: [planetId], references: [id], onDelete: Cascade)
   itemKey     String
   itemType    String // 'ship' | 'defence'
+  // A nullable canonical marker distinguishes new validated defence batches
+  // from historical permissive itemType='defence' rows.  Legacy rows remain
+  // readable but cannot mint defence inventory through trusted completion.
+  canonicalDefenceKey String?
   quantity    Int
   remaining   Int
   costAlloy   Int
