@@ -1,3 +1,5 @@
+import { isCorvetteStrikeResolverVersion } from './corvetteStrike';
+
 export const CORVETTE_STRIKE_ARRIVAL_JOB_NAME = 'complete-corvette-strike-arrival';
 export const CORVETTE_STRIKE_RETURN_JOB_NAME = 'complete-corvette-strike-return';
 export type CorvetteStrikeArrivalJobData = { missionId: string };
@@ -26,6 +28,7 @@ function valid(mission: any, kind: 'arrival' | 'return'): boolean {
     || !whole(mission.corvetteStrikeOutboundFuelHeliox) || !whole(mission.corvetteStrikeReturnFuelHeliox)
     || !Number.isSafeInteger(mission.corvetteStrikeOutboundDurationSeconds) || mission.corvetteStrikeOutboundDurationSeconds <= 0
     || !Number.isSafeInteger(mission.corvetteStrikeReturnDurationSeconds) || mission.corvetteStrikeReturnDurationSeconds <= 0
+    || !isCorvetteStrikeResolverVersion(mission.corvetteStrikeResolverVersion)
     || !Number.isFinite(mission.arrivesAt?.getTime?.())) return false;
   return kind === 'arrival'
     ? mission.corvetteStrikePhase === 'OUTBOUND' && mission.status === 'OUTBOUND'

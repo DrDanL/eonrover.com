@@ -1,5 +1,5 @@
 import { DEFENCES, SHIPS } from './constants';
-import { CORVETTE_STRIKE_RESOLVER_VERSION, resolveCorvetteStrike } from './corvetteStrike';
+import { isCorvetteStrikeResolverVersion, resolveCorvetteStrike } from './corvetteStrike';
 
 const ATTEMPTS = 3;
 
@@ -29,11 +29,11 @@ function manifest(value: unknown): { corvette: number } | null {
 function isRetryable(error: any): boolean {
   return error?.code === 'P2034' || (error?.code === 'P2010' && error?.meta?.code === '40001');
 }
-function canonicalMission(mission: any): { ships: { corvette: number }; attackerTechnology: { weaponTech: number; shieldTech: number; armourTech: number } } | null {
+function canonicalMission(mission: any): { ships: { corvette: number }; attackerTechnology: { weaponTech: number; shieldTech: number; armourTech: number }; resolverVersion: 'corvette-strike-v1' | 'corvette-strike-v2' } | null {
   const ships = manifest(mission?.corvetteStrikeShips);
   const attackerTechnology = technology(mission?.corvetteStrikeAttackerTechnology);
   if (!ships || !attackerTechnology || mission?.missionType !== 'ATTACK'
-    || mission.corvetteStrikeResolverVersion !== CORVETTE_STRIKE_RESOLVER_VERSION
+    || !isCorvetteStrikeResolverVersion(mission.corvetteStrikeResolverVersion)
     || typeof mission.corvetteStrikeResolverSeed !== 'string' || !mission.corvetteStrikeResolverSeed
     || !whole(mission.corvetteStrikeOutboundFuelHeliox) || !whole(mission.corvetteStrikeReturnFuelHeliox)
     || !Number.isSafeInteger(mission.corvetteStrikeOutboundDurationSeconds) || mission.corvetteStrikeOutboundDurationSeconds <= 0
@@ -41,7 +41,7 @@ function canonicalMission(mission: any): { ships: { corvette: number }; attacker
     || mission.speedPercent !== 100 || !mission.departedAt || !mission.arrivesAt
     || !Number.isFinite(mission.departedAt.getTime()) || !Number.isFinite(mission.arrivesAt.getTime())
     || mission.arrivesAt.getTime() - mission.departedAt.getTime() !== mission.corvetteStrikeOutboundDurationSeconds * 1_000) return null;
-  return { ships, attackerTechnology };
+  return { ships, attackerTechnology, resolverVersion: mission.corvetteStrikeResolverVersion };
 }
 function quantities(rows: Array<{ key: string; count: number }>, definitions: Record<string, unknown>): Record<string, number> {
   const result: Record<string, number> = {};
@@ -115,7 +115,7 @@ export async function settleCanonicalCorvetteStrike(
             tx.research.findMany({ where: { userId: target.ownerId, key: { in: ['weaponTech', 'shieldTech', 'armourTech'] } }, select: { key: true, level: true } }),
           ]);
           const result = resolveCorvetteStrike({
-            version: CORVETTE_STRIKE_RESOLVER_VERSION,
+            version: canonical.resolverVersion,
             seed: mission.corvetteStrikeResolverSeed,
             attacker: { corvettes: canonical.ships.corvette, technology: canonical.attackerTechnology },
             defender: { ships: quantities(ships, SHIPS), defences: quantities(defences, DEFENCES), technology: defenderTechnology(research) },
@@ -134,6 +134,7 @@ export async function settleCanonicalCorvetteStrike(
             survivors: result.survivors,
             losses: result.losses,
             rounds: result.rounds,
+            ...(result.termination ? { resolution: result.termination } : {}),
           };
           for (const [key, count] of Object.entries(result.losses.defender)) {
             if (count > 0 && key in SHIPS) await tx.ship.updateMany({ where: { planetId: target.id, key, count: { gte: count } }, data: { count: { decrement: count } } });
@@ -147,7 +148,7 @@ export async function settleCanonicalCorvetteStrike(
             data: { corvetteStrikePhase: returning ? 'RETURNING' : 'COMPLETE', status: returning ? 'RETURNING' : 'COMPLETE', returnsAt },
           });
           if (transition.count !== 1) return 'noop';
-          await tx.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: origin.ownerId, defenderId: target.ownerId, createdAt: currentTime, resolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, resultSnapshot: reportSnapshot } });
+          await tx.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: origin.ownerId, defenderId: target.ownerId, createdAt: currentTime, resolverVersion: canonical.resolverVersion, resultSnapshot: reportSnapshot } });
           await tx.notification.create({ data: { userId: origin.ownerId, type: 'CORVETTE_STRIKE_RESOLVED', message: 'Your Corvette strike result is ready.' } });
           await tx.notification.create({ data: { userId: target.ownerId, type: 'CORVETTE_STRIKE_UNDER_ATTACK', message: 'A Corvette strike reached one of your planets.' } });
           return returning ? 'arrived' : 'arrived';

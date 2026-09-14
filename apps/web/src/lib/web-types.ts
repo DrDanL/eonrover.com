@@ -673,7 +673,7 @@ export interface EspionageProbeReportDetail {
   };
 }
 
-export type CorvetteStrikeOutcome = 'attacker' | 'defender' | 'draw';
+export type CorvetteStrikeOutcome = 'attacker' | 'defender' | 'draw' | 'unresolved';
 
 export interface CorvetteStrikeReportListItem {
   id: string;

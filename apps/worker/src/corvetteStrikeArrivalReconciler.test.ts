@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  CORVETTE_STRIKE_RESOLVER_VERSION,
   corvetteStrikeArrivalJobId,
   corvetteStrikeReturnJobId,
   CorvetteStrikeSchedulingOutcome,
@@ -51,11 +52,11 @@ async function canonicalStrike(options: {
     corvetteStrikeShips: options.malformed ? { corvette: 0 } : { corvette: 2 },
     corvetteStrikeOutboundFuelHeliox: 1, corvetteStrikeReturnFuelHeliox: 1,
     corvetteStrikeOutboundDurationSeconds: 60, corvetteStrikeReturnDurationSeconds: 60,
-    corvetteStrikeResolverVersion: 'corvette-strike-v1', corvetteStrikeResolverSeed: 'e'.repeat(64),
+    corvetteStrikeResolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, corvetteStrikeResolverSeed: 'e'.repeat(64),
     corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: phase,
   } });
   if (phase === 'RETURNING' || phase === 'COMPLETE') {
-    await prisma.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: attacker.id, defenderId: defender.id, createdAt: arrivesAt, resolverVersion: 'corvette-strike-v1', resultSnapshot: { survivors: { attacker: { corvette: 2 } } } } });
+    await prisma.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: attacker.id, defenderId: defender.id, createdAt: arrivesAt, resolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, resultSnapshot: { survivors: { attacker: { corvette: 2 } } } } });
   }
   return { attacker, defender, origin, target, mission };
 }

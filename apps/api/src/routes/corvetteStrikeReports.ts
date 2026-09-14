@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { DEFENCES, GALAXY_COORDINATE_BOUNDS, SHIPS } from '@eonrover/shared';
+import { CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP, DEFENCES, GALAXY_COORDINATE_BOUNDS, SHIPS } from '@eonrover/shared';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
@@ -18,7 +18,8 @@ const reportIdSchema = z.object({ reportId: z.string().uuid() });
 type UnitMap = Record<string, number>;
 type SafeSnapshot = {
   target: { galaxy: number; system: number; slot: number; planet: { name: string; type: string } };
-  outcome: 'attacker' | 'defender' | 'draw';
+  outcome: 'attacker' | 'defender' | 'draw' | 'unresolved';
+  resolution?: 'elimination' | 'stalemate' | 'safety-cap';
   starting: { attacker: UnitMap; defender: UnitMap };
   survivors: { attacker: UnitMap; defender: UnitMap };
   losses: { attacker: UnitMap; defender: UnitMap };
@@ -76,12 +77,16 @@ function forceGroups(value: unknown): { attacker: UnitMap; defender: UnitMap } |
 }
 
 function safeSnapshot(value: unknown): SafeSnapshot | null {
-  if (!isRecord(value) || !strictKeys(value, ['losses', 'outcome', 'rounds', 'starting', 'survivors', 'target'])) return null;
+  if (!isRecord(value) || !(['losses,outcome,rounds,starting,survivors,target', 'losses,outcome,resolution,rounds,starting,survivors,target'].includes(Object.keys(value).sort().join(',')))) return null;
   const safeTarget = target(value.target);
   const starting = forceGroups(value.starting);
   const survivors = forceGroups(value.survivors);
   const losses = forceGroups(value.losses);
-  if (!safeTarget || !starting || !survivors || !losses || !['attacker', 'defender', 'draw'].includes(value.outcome as string) || !Array.isArray(value.rounds) || value.rounds.length > 6) return null;
+  const hasResolution = Object.prototype.hasOwnProperty.call(value, 'resolution');
+  const outcome = value.outcome as string;
+  if (!safeTarget || !starting || !survivors || !losses || !['attacker', 'defender', 'draw', 'unresolved'].includes(outcome) || !Array.isArray(value.rounds) || value.rounds.length > CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP) return null;
+  const resolution = hasResolution && ['elimination', 'stalemate', 'safety-cap'].includes(value.resolution as string) ? value.resolution as SafeSnapshot['resolution'] : undefined;
+  if ((outcome === 'unresolved' && resolution !== 'safety-cap') || (hasResolution && !resolution)) return null;
   const rounds: SafeSnapshot['rounds'] = [];
   for (let index = 0; index < value.rounds.length; index += 1) {
     const round = value.rounds[index];
@@ -91,7 +96,7 @@ function safeSnapshot(value: unknown): SafeSnapshot | null {
     if (!attackerLosses || !defenderLosses || Object.keys(attackerLosses).some((key) => key !== 'corvette')) return null;
     rounds.push({ round: index + 1, attackerLosses, defenderLosses });
   }
-  return { target: safeTarget, outcome: value.outcome as SafeSnapshot['outcome'], starting, survivors, losses, rounds };
+  return { target: safeTarget, outcome: outcome as SafeSnapshot['outcome'], ...(resolution ? { resolution } : {}), starting, survivors, losses, rounds };
 }
 
 function total(unitsValue: UnitMap): number { return Object.values(unitsValue).reduce((sum, amount) => sum + amount, 0); }

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.scheduleCorvetteStrikeReturnWakeup = exports.scheduleCorvetteStrikeArrivalWakeup = exports.corvetteStrikeReturnJobId = exports.corvetteStrikeArrivalJobId = exports.CORVETTE_STRIKE_RETURN_JOB_NAME = exports.CORVETTE_STRIKE_ARRIVAL_JOB_NAME = void 0;
+const corvetteStrike_1 = require("./corvetteStrike");
 exports.CORVETTE_STRIKE_ARRIVAL_JOB_NAME = 'complete-corvette-strike-arrival';
 exports.CORVETTE_STRIKE_RETURN_JOB_NAME = 'complete-corvette-strike-return';
 const LIVE = new Set(['active', 'delayed', 'prioritized', 'waiting', 'waiting-children']);
@@ -23,6 +24,7 @@ function valid(mission, kind) {
         || !whole(mission.corvetteStrikeOutboundFuelHeliox) || !whole(mission.corvetteStrikeReturnFuelHeliox)
         || !Number.isSafeInteger(mission.corvetteStrikeOutboundDurationSeconds) || mission.corvetteStrikeOutboundDurationSeconds <= 0
         || !Number.isSafeInteger(mission.corvetteStrikeReturnDurationSeconds) || mission.corvetteStrikeReturnDurationSeconds <= 0
+        || !(0, corvetteStrike_1.isCorvetteStrikeResolverVersion)(mission.corvetteStrikeResolverVersion)
         || !Number.isFinite(mission.arrivesAt?.getTime?.()))
         return false;
     return kind === 'arrival'

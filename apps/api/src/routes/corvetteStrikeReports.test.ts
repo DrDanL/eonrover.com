@@ -29,8 +29,18 @@ function snapshot(target: { galaxy: number; system: number; slot: number; name: 
     rounds: [{ round: 1, attackerLosses: { corvette: 1 }, defenderLosses: { scout: 1, flakTurret: 1 } }],
   };
 }
+function unresolvedSnapshot(target: { galaxy: number; system: number; slot: number; name: string }) {
+  return {
+    target: { coordinates: { galaxy: target.galaxy, system: target.system, slot: target.slot }, planet: { name: target.name, type: 'TEMPERATE' } },
+    outcome: 'unresolved', resolution: 'safety-cap',
+    starting: { attacker: { corvette: 1 }, defender: { flakTurret: 1 } },
+    survivors: { attacker: { corvette: 1 }, defender: { flakTurret: 1 } },
+    losses: { attacker: {}, defender: {} },
+    rounds: Array.from({ length: 512 }, (_, index) => ({ round: index + 1, attackerLosses: {}, defenderLosses: {} })),
+  };
+}
 
-async function reportFixture(options: { attacker?: Awaited<ReturnType<typeof player>>; createdAt?: Date } = {}) {
+async function reportFixture(options: { attacker?: Awaited<ReturnType<typeof player>>; createdAt?: Date; v2Unresolved?: boolean } = {}) {
   fixture += 1;
   const attacker = options.attacker ?? await player('combat-attacker');
   const defender = await player('combat-defender');
@@ -42,9 +52,9 @@ async function reportFixture(options: { attacker?: Awaited<ReturnType<typeof pla
     missionType: 'ATTACK', ships: {}, cargo: {}, speedPercent: 100, departedAt: new Date(now.getTime() - 120_000), arrivesAt: new Date(now.getTime() - 60_000), returnsAt: now, status: 'COMPLETE',
     corvetteStrikeOriginPlanetId: origin.id, corvetteStrikeTargetPlanetId: target.id, corvetteStrikeAttackerId: attacker.user.id, corvetteStrikeDefenderId: defender.user.id,
     corvetteStrikeShips: { corvette: 2 }, corvetteStrikeOutboundFuelHeliox: 1, corvetteStrikeReturnFuelHeliox: 1, corvetteStrikeOutboundDurationSeconds: 60, corvetteStrikeReturnDurationSeconds: 60,
-    corvetteStrikeResolverVersion: 'corvette-strike-v1', corvetteStrikeResolverSeed: 'a'.repeat(64), corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: 'COMPLETE',
+    corvetteStrikeResolverVersion: options.v2Unresolved ? 'corvette-strike-v2' : 'corvette-strike-v1', corvetteStrikeResolverSeed: 'a'.repeat(64), corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: 'COMPLETE',
   } });
-  const report = await prisma.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: attacker.user.id, defenderId: defender.user.id, createdAt: now, resolverVersion: 'corvette-strike-v1', resultSnapshot: snapshot(target) as Prisma.InputJsonValue } });
+  const report = await prisma.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: attacker.user.id, defenderId: defender.user.id, createdAt: now, resolverVersion: options.v2Unresolved ? 'corvette-strike-v2' : 'corvette-strike-v1', resultSnapshot: (options.v2Unresolved ? unresolvedSnapshot(target) : snapshot(target)) as Prisma.InputJsonValue } });
   return { attacker, defender, origin, target, mission, report };
 }
 
@@ -108,5 +118,13 @@ describe('player-safe canonical Corvette strike reports API', () => {
       corvetteStrikeArrivalQueue.getJobCounts(),
     ]);
     expect(after).toEqual(before);
+  });
+
+  it('projects a valid v2 safety-cap report without exposing its resolver internals', async () => {
+    const data = await reportFixture({ v2Unresolved: true });
+    const response = await request(app).get(`/api/combat/strikes/reports/${data.report.id}`).set('Cookie', data.attacker.cookie).expect(200);
+    expect(response.body).toMatchObject({ outcome: 'unresolved', attacker: { startingCorvettes: 1, lostCorvettes: 0, survivingCorvettes: 1 }, defender: { defences: { starting: { flakTurret: 1 }, lost: {}, surviving: { flakTurret: 1 } } } });
+    expect(JSON.stringify(response.body)).not.toContain('safety-cap');
+    expect(JSON.stringify(response.body)).not.toContain('resolverVersion');
   });
 });

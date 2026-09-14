@@ -1,5 +1,5 @@
 import { AccountStatus } from '@prisma/client';
-import { planCorvetteStrike } from '@eonrover/shared';
+import { CORVETTE_STRIKE_RESOLVER_VERSION, planCorvetteStrike } from '@eonrover/shared';
 import { prisma } from '../lib/prisma';
 import { launchCanonicalCorvetteStrike, CorvetteStrikeLaunchInput } from './corvetteStrikeLaunchService';
 
@@ -20,7 +20,7 @@ describe('launchCanonicalCorvetteStrike', () => {
     const data = await fixture(); const expected = planCorvetteStrike({ origin: { galaxy: data.origin.galaxy, system: data.origin.system, slot: data.origin.slot }, target: { galaxy: data.target.galaxy, system: data.target.system, slot: data.target.slot }, quantity: 2, fleetSpeed: 1 });
     const result = await launchCanonicalCorvetteStrike(input(data)); const [mission, ships, origin, target] = await Promise.all([prisma.fleetMission.findUniqueOrThrow({ where: { id: result.missionId } }), prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: data.origin.id, key: 'corvette' } } }), prisma.planet.findUniqueOrThrow({ where: { id: data.origin.id } }), prisma.planet.findUniqueOrThrow({ where: { id: data.target.id } })]);
     expect(result).toMatchObject({ ships: { corvette: 2 }, phase: 'OUTBOUND', outboundFuelHeliox: expected.outboundFuelHeliox, returnFuelHeliox: expected.returnFuelHeliox });
-    expect(mission).toMatchObject({ missionType: 'ATTACK', status: 'OUTBOUND', corvetteStrikeOriginPlanetId: data.origin.id, corvetteStrikeTargetPlanetId: data.target.id, corvetteStrikeAttackerId: data.attacker.id, corvetteStrikeDefenderId: data.defender.id, corvetteStrikeShips: { corvette: 2 }, corvetteStrikePhase: 'OUTBOUND', corvetteStrikeResolverVersion: 'corvette-strike-v1', jobId: null, resultSummary: null });
+    expect(mission).toMatchObject({ missionType: 'ATTACK', status: 'OUTBOUND', corvetteStrikeOriginPlanetId: data.origin.id, corvetteStrikeTargetPlanetId: data.target.id, corvetteStrikeAttackerId: data.attacker.id, corvetteStrikeDefenderId: data.defender.id, corvetteStrikeShips: { corvette: 2 }, corvetteStrikePhase: 'OUTBOUND', corvetteStrikeResolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, jobId: null, resultSummary: null });
     expect(mission.corvetteStrikeResolverSeed).toMatch(/^[a-f0-9]{64}$/); expect(ships.count).toBe(1); expect(origin.heliox).toBe(9000 - expected.outboundFuelHeliox - expected.returnFuelHeliox); expect(target).toMatchObject({ alloy: 1000, heliox: 9000, aether: 1000 }); expect(await prisma.corvetteStrikeReport.count()).toBe(0); expect(await prisma.notification.count()).toBe(0);
   });
   it('rejects protected, unavailable, self and cross-galaxy targets without reservations', async () => {

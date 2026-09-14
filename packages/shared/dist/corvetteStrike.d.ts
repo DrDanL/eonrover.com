@@ -1,5 +1,17 @@
 export declare const CORVETTE_STRIKE_SPEED_PERCENT = 100;
-export declare const CORVETTE_STRIKE_RESOLVER_VERSION = "corvette-strike-v1";
+/**
+ * New launches use v2. v1 remains supported solely so an already-accepted
+ * mission always completes under the resolver it persisted at launch.
+ */
+export declare const CORVETTE_STRIKE_V1_RESOLVER_VERSION = "corvette-strike-v1";
+export declare const CORVETTE_STRIKE_RESOLVER_VERSION = "corvette-strike-v2";
+export type CorvetteStrikeResolverVersion = typeof CORVETTE_STRIKE_V1_RESOLVER_VERSION | typeof CORVETTE_STRIKE_RESOLVER_VERSION;
+/**
+ * v2 continues until elimination or a verified no-damage stalemate. This is
+ * deliberately far above the 172 uninterrupted Corvette hits needed to break
+ * one current Rail Battery, while still bounding malformed/extreme snapshots.
+ */
+export declare const CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP = 512;
 export declare const MIN_CORVETTE_STRIKE_QUANTITY = 1;
 export declare const MAX_CORVETTE_STRIKE_QUANTITY = 100;
 export type CorvetteStrikeCoordinates = {
@@ -39,7 +51,7 @@ export type CorvetteStrikeForces = {
     technology: CorvetteStrikeTechnology;
 };
 export type CorvetteStrikeResolutionInput = {
-    version: typeof CORVETTE_STRIKE_RESOLVER_VERSION;
+    version: CorvetteStrikeResolverVersion;
     seed: string;
     attacker: {
         corvettes: number;
@@ -48,7 +60,7 @@ export type CorvetteStrikeResolutionInput = {
     defender: CorvetteStrikeForces;
 };
 export type CorvetteStrikeResolution = {
-    version: typeof CORVETTE_STRIKE_RESOLVER_VERSION;
+    version: CorvetteStrikeResolverVersion;
     seedFingerprint: string;
     starting: {
         attacker: Record<string, number>;
@@ -67,10 +79,12 @@ export type CorvetteStrikeResolution = {
         attackerLosses: Record<string, number>;
         defenderLosses: Record<string, number>;
     }>;
-    outcome: 'attacker' | 'defender' | 'draw';
+    outcome: 'attacker' | 'defender' | 'draw' | 'unresolved';
+    termination?: 'elimination' | 'stalemate' | 'safety-cap';
 };
 export declare class CorvetteStrikeResolutionError extends Error {
     constructor(message: string);
 }
-/** Deterministic v1 battle resolver. It accepts only complete explicit snapshots and a server seed. */
+export declare function isCorvetteStrikeResolverVersion(value: unknown): value is CorvetteStrikeResolverVersion;
+/** Resolves only an explicit persisted-version snapshot under its matching policy. */
 export declare function resolveCorvetteStrike(input: unknown): CorvetteStrikeResolution;

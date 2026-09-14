@@ -1,12 +1,24 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CorvetteStrikeResolutionError = exports.CorvetteStrikePlanError = exports.MAX_CORVETTE_STRIKE_QUANTITY = exports.MIN_CORVETTE_STRIKE_QUANTITY = exports.CORVETTE_STRIKE_RESOLVER_VERSION = exports.CORVETTE_STRIKE_SPEED_PERCENT = void 0;
+exports.CorvetteStrikeResolutionError = exports.CorvetteStrikePlanError = exports.MAX_CORVETTE_STRIKE_QUANTITY = exports.MIN_CORVETTE_STRIKE_QUANTITY = exports.CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP = exports.CORVETTE_STRIKE_RESOLVER_VERSION = exports.CORVETTE_STRIKE_V1_RESOLVER_VERSION = exports.CORVETTE_STRIKE_SPEED_PERCENT = void 0;
 exports.planCorvetteStrike = planCorvetteStrike;
+exports.isCorvetteStrikeResolverVersion = isCorvetteStrikeResolverVersion;
 exports.resolveCorvetteStrike = resolveCorvetteStrike;
 const constants_1 = require("./constants");
 const formulas_1 = require("./formulas");
 exports.CORVETTE_STRIKE_SPEED_PERCENT = 100;
-exports.CORVETTE_STRIKE_RESOLVER_VERSION = 'corvette-strike-v1';
+/**
+ * New launches use v2. v1 remains supported solely so an already-accepted
+ * mission always completes under the resolver it persisted at launch.
+ */
+exports.CORVETTE_STRIKE_V1_RESOLVER_VERSION = 'corvette-strike-v1';
+exports.CORVETTE_STRIKE_RESOLVER_VERSION = 'corvette-strike-v2';
+/**
+ * v2 continues until elimination or a verified no-damage stalemate. This is
+ * deliberately far above the 172 uninterrupted Corvette hits needed to break
+ * one current Rail Battery, while still bounding malformed/extreme snapshots.
+ */
+exports.CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP = 512;
 exports.MIN_CORVETTE_STRIKE_QUANTITY = 1;
 exports.MAX_CORVETTE_STRIKE_QUANTITY = 100;
 class CorvetteStrikePlanError extends Error {
@@ -113,14 +125,16 @@ function subtract(starting, survivors) { const result = {}; for (const key of Ob
     if (loss > 0)
         result[key] = loss;
 } return result; }
-/** Deterministic v1 battle resolver. It accepts only complete explicit snapshots and a server seed. */
-function resolveCorvetteStrike(input) {
+function isCorvetteStrikeResolverVersion(value) {
+    return value === exports.CORVETTE_STRIKE_V1_RESOLVER_VERSION || value === exports.CORVETTE_STRIKE_RESOLVER_VERSION;
+}
+function parseResolutionInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input))
         throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
     const value = input;
     const keys = Object.keys(value).sort();
     const expected = ['attacker', 'defender', 'seed', 'version'];
-    if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) || value.version !== exports.CORVETTE_STRIKE_RESOLVER_VERSION || !value.attacker || !value.defender || typeof value.seed !== 'string')
+    if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) || !isCorvetteStrikeResolverVersion(value.version) || !value.attacker || !value.defender || typeof value.seed !== 'string')
         throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
     const attacker = value.attacker;
     const defender = value.defender;
@@ -128,20 +142,32 @@ function resolveCorvetteStrike(input) {
         throw new CorvetteStrikeResolutionError('Combat force snapshot is invalid.');
     const attackerTech = technology(attacker.technology);
     const defenderTech = technology(defender.technology);
+    const attacking = snapshotUnits({ corvette: attacker.corvettes }, { corvette: constants_1.SHIPS.corvette }, 'attacker', attackerTech);
+    const defending = [...snapshotUnits(defender.ships, constants_1.SHIPS, 'defender', defenderTech), ...snapshotUnits(defender.defences, constants_1.DEFENCES, 'defender', defenderTech)];
+    return { value, attacker, defender, attackerTech, defenderTech, attacking, defending };
+}
+function fire(random, shooters, targets) {
+    for (const shooter of shooters) {
+        if (!targets.length)
+            break;
+        const target = targets[Math.floor(random() * targets.length)];
+        target.hull -= Math.max(0, shooter.attack - target.shield);
+    }
+}
+function canDamage(shooters, targets) {
+    return shooters.some((shooter) => targets.some((target) => shooter.attack > target.shield));
+}
+/** The original fixed-six-round resolver, retained for persisted v1 missions. */
+function resolveV1(input) {
+    const { value, attacking: initialAttacking, defending: initialDefending } = parseResolutionInput(input);
     const random = randomFromSeed(value.seed);
-    let attacking = snapshotUnits({ corvette: attacker.corvettes }, { corvette: constants_1.SHIPS.corvette }, 'attacker', attackerTech);
-    let defending = [...snapshotUnits(defender.ships, constants_1.SHIPS, 'defender', defenderTech), ...snapshotUnits(defender.defences, constants_1.DEFENCES, 'defender', defenderTech)];
+    let attacking = initialAttacking;
+    let defending = initialDefending;
     const starting = { attacker: counts(attacking), defender: counts(defending) };
     const rounds = [];
     for (let round = 1; round <= 6 && attacking.length && defending.length; round += 1) {
-        const fire = (shooters, targets) => { for (const shooter of shooters) {
-            if (!targets.length)
-                break;
-            const target = targets[Math.floor(random() * targets.length)];
-            target.hull -= Math.max(0, shooter.attack - target.shield);
-        } };
-        fire(attacking, defending);
-        fire(defending, attacking);
+        fire(random, attacking, defending);
+        fire(random, defending, attacking);
         const beforeAttacker = counts(attacking);
         const beforeDefender = counts(defending);
         attacking = attacking.filter((unit) => unit.hull > 0);
@@ -150,5 +176,47 @@ function resolveCorvetteStrike(input) {
     }
     const survivors = { attacker: counts(attacking), defender: counts(defending) };
     const outcome = attacking.length && !defending.length ? 'attacker' : defending.length && !attacking.length ? 'defender' : 'draw';
-    return { version: exports.CORVETTE_STRIKE_RESOLVER_VERSION, seedFingerprint: seedFingerprint(value.seed), starting, survivors, losses: { attacker: subtract(starting.attacker, survivors.attacker), defender: subtract(starting.defender, survivors.defender) }, rounds, outcome };
+    return { version: exports.CORVETTE_STRIKE_V1_RESOLVER_VERSION, seedFingerprint: seedFingerprint(value.seed), starting, survivors, losses: { attacker: subtract(starting.attacker, survivors.attacker), defender: subtract(starting.defender, survivors.defender) }, rounds, outcome };
+}
+/**
+ * v2 resolves a fixed snapshot until a side is eliminated, no remaining unit
+ * can penetrate an opposing shield, or the explicit 512-round safety cap is
+ * reached. A safety-cap result is never presented as an ordinary draw.
+ */
+function resolveV2(input) {
+    const { value, attacking: initialAttacking, defending: initialDefending } = parseResolutionInput(input);
+    const random = randomFromSeed(value.seed);
+    let attacking = initialAttacking;
+    let defending = initialDefending;
+    const starting = { attacker: counts(attacking), defender: counts(defending) };
+    const rounds = [];
+    let termination = 'elimination';
+    for (let round = 1; round <= exports.CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP && attacking.length && defending.length; round += 1) {
+        if (!canDamage(attacking, defending) && !canDamage(defending, attacking)) {
+            termination = 'stalemate';
+            break;
+        }
+        fire(random, attacking, defending);
+        fire(random, defending, attacking);
+        const beforeAttacker = counts(attacking);
+        const beforeDefender = counts(defending);
+        attacking = attacking.filter((unit) => unit.hull > 0);
+        defending = defending.filter((unit) => unit.hull > 0);
+        rounds.push({ round, attackerLosses: subtract(beforeAttacker, counts(attacking)), defenderLosses: subtract(beforeDefender, counts(defending)) });
+        if (!attacking.length || !defending.length) {
+            termination = 'elimination';
+            break;
+        }
+        if (round === exports.CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP)
+            termination = 'safety-cap';
+    }
+    const survivors = { attacker: counts(attacking), defender: counts(defending) };
+    const outcome = termination === 'safety-cap' ? 'unresolved' : attacking.length && !defending.length ? 'attacker' : defending.length && !attacking.length ? 'defender' : 'draw';
+    return { version: exports.CORVETTE_STRIKE_RESOLVER_VERSION, seedFingerprint: seedFingerprint(value.seed), starting, survivors, losses: { attacker: subtract(starting.attacker, survivors.attacker), defender: subtract(starting.defender, survivors.defender) }, rounds, outcome, termination };
+}
+/** Resolves only an explicit persisted-version snapshot under its matching policy. */
+function resolveCorvetteStrike(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || !isCorvetteStrikeResolverVersion(input.version))
+        throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
+    return input.version === exports.CORVETTE_STRIKE_V1_RESOLVER_VERSION ? resolveV1(input) : resolveV2(input);
 }

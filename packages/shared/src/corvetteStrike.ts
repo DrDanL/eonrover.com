@@ -2,7 +2,19 @@ import { DEFENCES, GALAXY_COORDINATE_BOUNDS, SHIPS } from './constants';
 import { distanceBetween, flightDurationSeconds, fuelConsumption } from './formulas';
 
 export const CORVETTE_STRIKE_SPEED_PERCENT = 100;
-export const CORVETTE_STRIKE_RESOLVER_VERSION = 'corvette-strike-v1';
+/**
+ * New launches use v2. v1 remains supported solely so an already-accepted
+ * mission always completes under the resolver it persisted at launch.
+ */
+export const CORVETTE_STRIKE_V1_RESOLVER_VERSION = 'corvette-strike-v1';
+export const CORVETTE_STRIKE_RESOLVER_VERSION = 'corvette-strike-v2';
+export type CorvetteStrikeResolverVersion = typeof CORVETTE_STRIKE_V1_RESOLVER_VERSION | typeof CORVETTE_STRIKE_RESOLVER_VERSION;
+/**
+ * v2 continues until elimination or a verified no-damage stalemate. This is
+ * deliberately far above the 172 uninterrupted Corvette hits needed to break
+ * one current Rail Battery, while still bounding malformed/extreme snapshots.
+ */
+export const CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP = 512;
 export const MIN_CORVETTE_STRIKE_QUANTITY = 1;
 export const MAX_CORVETTE_STRIKE_QUANTITY = 100;
 
@@ -47,8 +59,8 @@ export function planCorvetteStrike(input: unknown): CorvetteStrikePlan {
 
 export type CorvetteStrikeTechnology = { weaponTech: number; shieldTech: number; armourTech: number };
 export type CorvetteStrikeForces = { ships: Record<string, number>; defences: Record<string, number>; technology: CorvetteStrikeTechnology };
-export type CorvetteStrikeResolutionInput = { version: typeof CORVETTE_STRIKE_RESOLVER_VERSION; seed: string; attacker: { corvettes: number; technology: CorvetteStrikeTechnology }; defender: CorvetteStrikeForces };
-export type CorvetteStrikeResolution = { version: typeof CORVETTE_STRIKE_RESOLVER_VERSION; seedFingerprint: string; starting: { attacker: Record<string, number>; defender: Record<string, number> }; survivors: { attacker: Record<string, number>; defender: Record<string, number> }; losses: { attacker: Record<string, number>; defender: Record<string, number> }; rounds: Array<{ round: number; attackerLosses: Record<string, number>; defenderLosses: Record<string, number> }>; outcome: 'attacker' | 'defender' | 'draw' };
+export type CorvetteStrikeResolutionInput = { version: CorvetteStrikeResolverVersion; seed: string; attacker: { corvettes: number; technology: CorvetteStrikeTechnology }; defender: CorvetteStrikeForces };
+export type CorvetteStrikeResolution = { version: CorvetteStrikeResolverVersion; seedFingerprint: string; starting: { attacker: Record<string, number>; defender: Record<string, number> }; survivors: { attacker: Record<string, number>; defender: Record<string, number> }; losses: { attacker: Record<string, number>; defender: Record<string, number> }; rounds: Array<{ round: number; attackerLosses: Record<string, number>; defenderLosses: Record<string, number> }>; outcome: 'attacker' | 'defender' | 'draw' | 'unresolved'; termination?: 'elimination' | 'stalemate' | 'safety-cap' };
 export class CorvetteStrikeResolutionError extends Error { constructor(message: string) { super(message); this.name = 'CorvetteStrikeResolutionError'; } }
 type Unit = { key: string; owner: 'attacker' | 'defender'; attack: number; shield: number; hull: number };
 function validCount(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 10_000; }
@@ -77,23 +89,70 @@ function snapshotUnits(values: Record<string, unknown>, definitions: Record<stri
 }
 function counts(units: Unit[]): Record<string, number> { const result: Record<string, number> = {}; for (const unit of units) result[unit.key] = (result[unit.key] ?? 0) + 1; return result; }
 function subtract(starting: Record<string, number>, survivors: Record<string, number>): Record<string, number> { const result: Record<string, number> = {}; for (const key of Object.keys(starting).sort()) { const loss = starting[key] - (survivors[key] ?? 0); if (loss > 0) result[key] = loss; } return result; }
-/** Deterministic v1 battle resolver. It accepts only complete explicit snapshots and a server seed. */
-export function resolveCorvetteStrike(input: unknown): CorvetteStrikeResolution {
+export function isCorvetteStrikeResolverVersion(value: unknown): value is CorvetteStrikeResolverVersion {
+  return value === CORVETTE_STRIKE_V1_RESOLVER_VERSION || value === CORVETTE_STRIKE_RESOLVER_VERSION;
+}
+function parseResolutionInput(input: unknown): { value: Record<string, unknown>; attacker: Record<string, unknown>; defender: Record<string, unknown>; attackerTech: CorvetteStrikeTechnology; defenderTech: CorvetteStrikeTechnology; attacking: Unit[]; defending: Unit[] } {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
   const value = input as Record<string, unknown>; const keys = Object.keys(value).sort(); const expected = ['attacker', 'defender', 'seed', 'version'];
-  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) || value.version !== CORVETTE_STRIKE_RESOLVER_VERSION || !value.attacker || !value.defender || typeof value.seed !== 'string') throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) || !isCorvetteStrikeResolverVersion(value.version) || !value.attacker || !value.defender || typeof value.seed !== 'string') throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
   const attacker = value.attacker as Record<string, unknown>; const defender = value.defender as Record<string, unknown>;
   if (Object.keys(attacker).sort().join(',') !== 'corvettes,technology' || !validCount(attacker.corvettes) || attacker.corvettes < 1 || attacker.corvettes > MAX_CORVETTE_STRIKE_QUANTITY || Object.keys(defender).sort().join(',') !== 'defences,ships,technology' || !defender.ships || !defender.defences || typeof defender.ships !== 'object' || typeof defender.defences !== 'object') throw new CorvetteStrikeResolutionError('Combat force snapshot is invalid.');
-  const attackerTech = technology(attacker.technology); const defenderTech = technology(defender.technology); const random = randomFromSeed(value.seed);
-  let attacking = snapshotUnits({ corvette: attacker.corvettes }, { corvette: SHIPS.corvette }, 'attacker', attackerTech);
-  let defending = [...snapshotUnits(defender.ships as Record<string, unknown>, SHIPS, 'defender', defenderTech), ...snapshotUnits(defender.defences as Record<string, unknown>, DEFENCES, 'defender', defenderTech)];
+  const attackerTech = technology(attacker.technology); const defenderTech = technology(defender.technology);
+  const attacking = snapshotUnits({ corvette: attacker.corvettes }, { corvette: SHIPS.corvette }, 'attacker', attackerTech);
+  const defending = [...snapshotUnits(defender.ships as Record<string, unknown>, SHIPS, 'defender', defenderTech), ...snapshotUnits(defender.defences as Record<string, unknown>, DEFENCES, 'defender', defenderTech)];
+  return { value, attacker, defender, attackerTech, defenderTech, attacking, defending };
+}
+function fire(random: () => number, shooters: Unit[], targets: Unit[]) {
+  for (const shooter of shooters) {
+    if (!targets.length) break;
+    const target = targets[Math.floor(random() * targets.length)];
+    target.hull -= Math.max(0, shooter.attack - target.shield);
+  }
+}
+function canDamage(shooters: Unit[], targets: Unit[]): boolean {
+  return shooters.some((shooter) => targets.some((target) => shooter.attack > target.shield));
+}
+/** The original fixed-six-round resolver, retained for persisted v1 missions. */
+function resolveV1(input: unknown): CorvetteStrikeResolution {
+  const { value, attacking: initialAttacking, defending: initialDefending } = parseResolutionInput(input);
+  const random = randomFromSeed(value.seed as string);
+  let attacking = initialAttacking; let defending = initialDefending;
   const starting = { attacker: counts(attacking), defender: counts(defending) }; const rounds: CorvetteStrikeResolution['rounds'] = [];
   for (let round = 1; round <= 6 && attacking.length && defending.length; round += 1) {
-    const fire = (shooters: Unit[], targets: Unit[]) => { for (const shooter of shooters) { if (!targets.length) break; const target = targets[Math.floor(random() * targets.length)]; target.hull -= Math.max(0, shooter.attack - target.shield); } };
-    fire(attacking, defending); fire(defending, attacking);
+    fire(random, attacking, defending); fire(random, defending, attacking);
     const beforeAttacker = counts(attacking); const beforeDefender = counts(defending); attacking = attacking.filter((unit) => unit.hull > 0); defending = defending.filter((unit) => unit.hull > 0);
     rounds.push({ round, attackerLosses: subtract(beforeAttacker, counts(attacking)), defenderLosses: subtract(beforeDefender, counts(defending)) });
   }
   const survivors = { attacker: counts(attacking), defender: counts(defending) }; const outcome = attacking.length && !defending.length ? 'attacker' : defending.length && !attacking.length ? 'defender' : 'draw';
-  return { version: CORVETTE_STRIKE_RESOLVER_VERSION, seedFingerprint: seedFingerprint(value.seed), starting, survivors, losses: { attacker: subtract(starting.attacker, survivors.attacker), defender: subtract(starting.defender, survivors.defender) }, rounds, outcome };
+  return { version: CORVETTE_STRIKE_V1_RESOLVER_VERSION, seedFingerprint: seedFingerprint(value.seed as string), starting, survivors, losses: { attacker: subtract(starting.attacker, survivors.attacker), defender: subtract(starting.defender, survivors.defender) }, rounds, outcome };
+}
+/**
+ * v2 resolves a fixed snapshot until a side is eliminated, no remaining unit
+ * can penetrate an opposing shield, or the explicit 512-round safety cap is
+ * reached. A safety-cap result is never presented as an ordinary draw.
+ */
+function resolveV2(input: unknown): CorvetteStrikeResolution {
+  const { value, attacking: initialAttacking, defending: initialDefending } = parseResolutionInput(input);
+  const random = randomFromSeed(value.seed as string);
+  let attacking = initialAttacking; let defending = initialDefending;
+  const starting = { attacker: counts(attacking), defender: counts(defending) }; const rounds: CorvetteStrikeResolution['rounds'] = [];
+  let termination: NonNullable<CorvetteStrikeResolution['termination']> = 'elimination';
+  for (let round = 1; round <= CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP && attacking.length && defending.length; round += 1) {
+    if (!canDamage(attacking, defending) && !canDamage(defending, attacking)) { termination = 'stalemate'; break; }
+    fire(random, attacking, defending); fire(random, defending, attacking);
+    const beforeAttacker = counts(attacking); const beforeDefender = counts(defending);
+    attacking = attacking.filter((unit) => unit.hull > 0); defending = defending.filter((unit) => unit.hull > 0);
+    rounds.push({ round, attackerLosses: subtract(beforeAttacker, counts(attacking)), defenderLosses: subtract(beforeDefender, counts(defending)) });
+    if (!attacking.length || !defending.length) { termination = 'elimination'; break; }
+    if (round === CORVETTE_STRIKE_V2_SAFETY_ROUND_CAP) termination = 'safety-cap';
+  }
+  const survivors = { attacker: counts(attacking), defender: counts(defending) };
+  const outcome = termination === 'safety-cap' ? 'unresolved' : attacking.length && !defending.length ? 'attacker' : defending.length && !attacking.length ? 'defender' : 'draw';
+  return { version: CORVETTE_STRIKE_RESOLVER_VERSION, seedFingerprint: seedFingerprint(value.seed as string), starting, survivors, losses: { attacker: subtract(starting.attacker, survivors.attacker), defender: subtract(starting.defender, survivors.defender) }, rounds, outcome, termination };
+}
+/** Resolves only an explicit persisted-version snapshot under its matching policy. */
+export function resolveCorvetteStrike(input: unknown): CorvetteStrikeResolution {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || !isCorvetteStrikeResolverVersion((input as Record<string, unknown>).version)) throw new CorvetteStrikeResolutionError('Combat resolution input is invalid.');
+  return (input as Record<string, unknown>).version === CORVETTE_STRIKE_V1_RESOLVER_VERSION ? resolveV1(input) : resolveV2(input);
 }

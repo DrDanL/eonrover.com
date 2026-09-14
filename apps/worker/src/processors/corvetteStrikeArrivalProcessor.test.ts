@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Job } from 'bullmq';
+import { CORVETTE_STRIKE_RESOLVER_VERSION } from '@eonrover/shared';
 import { prisma } from '../prisma';
 import { corvetteStrikeArrivalQueue } from '../queues';
 import {
@@ -45,11 +46,11 @@ async function canonicalStrike(options: {
     corvetteStrikeShips: options.malformed ? { corvette: 0 } : { corvette: 2 },
     corvetteStrikeOutboundFuelHeliox: 1, corvetteStrikeReturnFuelHeliox: 1,
     corvetteStrikeOutboundDurationSeconds: 60, corvetteStrikeReturnDurationSeconds: 60,
-    corvetteStrikeResolverVersion: 'corvette-strike-v1', corvetteStrikeResolverSeed: 'f'.repeat(64),
+    corvetteStrikeResolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, corvetteStrikeResolverSeed: 'f'.repeat(64),
     corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: phase,
   } });
   if (phase === 'RETURNING' || phase === 'COMPLETE') {
-    await prisma.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: attacker.id, defenderId: defender.id, createdAt: arrivesAt, resolverVersion: 'corvette-strike-v1', resultSnapshot: { survivors: { attacker: { corvette: 2 } } } } });
+    await prisma.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: attacker.id, defenderId: defender.id, createdAt: arrivesAt, resolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, resultSnapshot: { survivors: { attacker: { corvette: 2 } } } } });
   }
   return { attacker, defender, origin, target, mission, arrivesAt, returnsAt };
 }
@@ -71,7 +72,7 @@ describe('processCorvetteStrikeArrivalJob', () => {
       prisma.notification.findMany({ where: { userId: { in: [data.attacker.id, data.defender.id] } } }),
     ]);
     expect(mission).toMatchObject({ status: 'RETURNING', corvetteStrikePhase: 'RETURNING', corvetteStrikeShips: { corvette: 2 } });
-    expect(report).toMatchObject({ attackerId: data.attacker.id, defenderId: data.defender.id });
+    expect(report).toMatchObject({ attackerId: data.attacker.id, defenderId: data.defender.id, resolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION });
     expect(notices).toHaveLength(2);
   });
 

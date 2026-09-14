@@ -28,7 +28,7 @@ function canonicalMission(mission) {
     const ships = manifest(mission?.corvetteStrikeShips);
     const attackerTechnology = technology(mission?.corvetteStrikeAttackerTechnology);
     if (!ships || !attackerTechnology || mission?.missionType !== 'ATTACK'
-        || mission.corvetteStrikeResolverVersion !== corvetteStrike_1.CORVETTE_STRIKE_RESOLVER_VERSION
+        || !(0, corvetteStrike_1.isCorvetteStrikeResolverVersion)(mission.corvetteStrikeResolverVersion)
         || typeof mission.corvetteStrikeResolverSeed !== 'string' || !mission.corvetteStrikeResolverSeed
         || !whole(mission.corvetteStrikeOutboundFuelHeliox) || !whole(mission.corvetteStrikeReturnFuelHeliox)
         || !Number.isSafeInteger(mission.corvetteStrikeOutboundDurationSeconds) || mission.corvetteStrikeOutboundDurationSeconds <= 0
@@ -37,7 +37,7 @@ function canonicalMission(mission) {
         || !Number.isFinite(mission.departedAt.getTime()) || !Number.isFinite(mission.arrivesAt.getTime())
         || mission.arrivesAt.getTime() - mission.departedAt.getTime() !== mission.corvetteStrikeOutboundDurationSeconds * 1_000)
         return null;
-    return { ships, attackerTechnology };
+    return { ships, attackerTechnology, resolverVersion: mission.corvetteStrikeResolverVersion };
 }
 function quantities(rows, definitions) {
     const result = {};
@@ -115,7 +115,7 @@ async function settleCanonicalCorvetteStrike(database, missionId, currentTime = 
                         tx.research.findMany({ where: { userId: target.ownerId, key: { in: ['weaponTech', 'shieldTech', 'armourTech'] } }, select: { key: true, level: true } }),
                     ]);
                     const result = (0, corvetteStrike_1.resolveCorvetteStrike)({
-                        version: corvetteStrike_1.CORVETTE_STRIKE_RESOLVER_VERSION,
+                        version: canonical.resolverVersion,
                         seed: mission.corvetteStrikeResolverSeed,
                         attacker: { corvettes: canonical.ships.corvette, technology: canonical.attackerTechnology },
                         defender: { ships: quantities(ships, constants_1.SHIPS), defences: quantities(defences, constants_1.DEFENCES), technology: defenderTechnology(research) },
@@ -134,6 +134,7 @@ async function settleCanonicalCorvetteStrike(database, missionId, currentTime = 
                         survivors: result.survivors,
                         losses: result.losses,
                         rounds: result.rounds,
+                        ...(result.termination ? { resolution: result.termination } : {}),
                     };
                     for (const [key, count] of Object.entries(result.losses.defender)) {
                         if (count > 0 && key in constants_1.SHIPS)
@@ -150,7 +151,7 @@ async function settleCanonicalCorvetteStrike(database, missionId, currentTime = 
                     });
                     if (transition.count !== 1)
                         return 'noop';
-                    await tx.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: origin.ownerId, defenderId: target.ownerId, createdAt: currentTime, resolverVersion: corvetteStrike_1.CORVETTE_STRIKE_RESOLVER_VERSION, resultSnapshot: reportSnapshot } });
+                    await tx.corvetteStrikeReport.create({ data: { missionId: mission.id, attackerId: origin.ownerId, defenderId: target.ownerId, createdAt: currentTime, resolverVersion: canonical.resolverVersion, resultSnapshot: reportSnapshot } });
                     await tx.notification.create({ data: { userId: origin.ownerId, type: 'CORVETTE_STRIKE_RESOLVED', message: 'Your Corvette strike result is ready.' } });
                     await tx.notification.create({ data: { userId: target.ownerId, type: 'CORVETTE_STRIKE_UNDER_ATTACK', message: 'A Corvette strike reached one of your planets.' } });
                     return returning ? 'arrived' : 'arrived';

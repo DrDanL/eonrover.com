@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { corvetteStrikeArrivalQueue, fleetQueue } from '../lib/redis';
 import { launchCanonicalCorvetteStrike } from './corvetteStrikeLaunchService';
-import { settleCanonicalCorvetteStrike } from '@eonrover/shared';
+import { CORVETTE_STRIKE_RESOLVER_VERSION, settleCanonicalCorvetteStrike } from '@eonrover/shared';
 import {
   CORVETTE_STRIKE_ARRIVAL_JOB_NAME,
   CORVETTE_STRIKE_RETURN_JOB_NAME,
@@ -27,7 +27,7 @@ async function fixture() {
 }
 async function mission(data: Awaited<ReturnType<typeof fixture>>, phase: 'OUTBOUND' | 'RETURNING' = 'OUTBOUND', dueOffset = 90_000) {
   const arrival = new Date(NOW.getTime() + (phase === 'OUTBOUND' ? dueOffset : -60_000)); const returning = new Date(NOW.getTime() + (phase === 'RETURNING' ? dueOffset : 120_000));
-  return prisma.fleetMission.create({ data: { originId: data.origin.id, targetId: data.target.id, targetGalaxy: data.target.galaxy, targetSystem: data.target.system, targetSlot: data.target.slot, missionType: 'ATTACK', ships: {}, cargo: {}, speedPercent: 100, departedAt: new Date(arrival.getTime() - 60_000), arrivesAt: arrival, returnsAt: returning, status: phase, corvetteStrikeOriginPlanetId: data.origin.id, corvetteStrikeTargetPlanetId: data.target.id, corvetteStrikeAttackerId: data.attacker.id, corvetteStrikeDefenderId: data.defender.id, corvetteStrikeShips: { corvette: 2 }, corvetteStrikeOutboundFuelHeliox: 1, corvetteStrikeReturnFuelHeliox: 1, corvetteStrikeOutboundDurationSeconds: 60, corvetteStrikeReturnDurationSeconds: 60, corvetteStrikeResolverVersion: 'corvette-strike-v1', corvetteStrikeResolverSeed: 'a'.repeat(64), corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: phase } });
+  return prisma.fleetMission.create({ data: { originId: data.origin.id, targetId: data.target.id, targetGalaxy: data.target.galaxy, targetSystem: data.target.system, targetSlot: data.target.slot, missionType: 'ATTACK', ships: {}, cargo: {}, speedPercent: 100, departedAt: new Date(arrival.getTime() - 60_000), arrivesAt: arrival, returnsAt: returning, status: phase, corvetteStrikeOriginPlanetId: data.origin.id, corvetteStrikeTargetPlanetId: data.target.id, corvetteStrikeAttackerId: data.attacker.id, corvetteStrikeDefenderId: data.defender.id, corvetteStrikeShips: { corvette: 2 }, corvetteStrikeOutboundFuelHeliox: 1, corvetteStrikeReturnFuelHeliox: 1, corvetteStrikeOutboundDurationSeconds: 60, corvetteStrikeReturnDurationSeconds: 60, corvetteStrikeResolverVersion: CORVETTE_STRIKE_RESOLVER_VERSION, corvetteStrikeResolverSeed: 'a'.repeat(64), corvetteStrikeAttackerTechnology: { weaponTech: 0, shieldTech: 0, armourTech: 0 }, corvetteStrikePhase: phase } });
 }
 
 describe('canonical Corvette strike wake-up scheduling', () => {
