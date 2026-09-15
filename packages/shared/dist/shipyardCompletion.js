@@ -2,11 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.completeShipyardBatch = completeShipyardBatch;
 exports.completeDueShipyardForPlanet = completeDueShipyardForPlanet;
-/** Legacy `itemType: defence` rows were permissive.  They are deliberately
- * never inventory-authoritative; only a validated Flak batch stamped by the
- * canonical start transaction may complete into Defence. */
-function isCanonicalFlakBatch(item) {
-    return item.itemType === 'defence' && item.itemKey === 'flakTurret' && item.canonicalDefenceKey === 'flakTurret';
+/** Legacy defence rows were permissive. Only an explicitly allowlisted
+ * canonical marker written by the trusted start transaction may mint Defence. */
+function isCanonicalDefenceBatch(item) {
+    return item.itemType === 'defence'
+        && typeof item.itemKey === 'string'
+        && item.canonicalDefenceKey === item.itemKey
+        && (0, defenceCatalogue_1.isActiveShipyardDefenceKey)(item.itemKey);
 }
 function isCanonicalShipBatch(item) {
     return item.itemType === 'ship' && typeof item.itemKey === 'string' && ['scout', 'transporter', 'colonyShip', 'corvette', 'frigate', 'recycler', 'probe'].includes(item.itemKey);
@@ -49,7 +51,7 @@ async function completeShipyardBatch(database, queueItemId, now = new Date()) {
                     return 'too-early';
                 // Do not turn arbitrary historical queue data into inventory.  Legacy
                 // malformed rows are terminally contained without notification.
-                if (!isCanonicalShipBatch(item) && !isCanonicalFlakBatch(item))
+                if (!isCanonicalShipBatch(item) && !isCanonicalDefenceBatch(item))
                     return 'missing';
                 // Claim first.  The inventory and notification are in the same
                 // transaction, so duplicate workers and API fallbacks are harmless.
@@ -58,7 +60,7 @@ async function completeShipyardBatch(database, queueItemId, now = new Date()) {
                 });
                 if (claimed.count !== 1)
                     return 'complete';
-                const inventory = isCanonicalFlakBatch(item) ? transaction.defence : transaction.ship;
+                const inventory = isCanonicalDefenceBatch(item) ? transaction.defence : transaction.ship;
                 await inventory.upsert({
                     where: { planetId_key: { planetId: planet.id, key: item.itemKey } },
                     update: { count: { increment: item.quantity } },
@@ -89,3 +91,4 @@ async function completeDueShipyardForPlanet(database, planetId, now = new Date()
     for (const item of due)
         await completeShipyardBatch(database, item.id, now);
 }
+const defenceCatalogue_1 = require("./defenceCatalogue");

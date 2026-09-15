@@ -42,16 +42,21 @@ describe('Shipyard authoritative completion and recovery', () => {
     expect(await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: f.planet.id, key: 'scout' } } })).toMatchObject({ count: 4 });
     expect(await prisma.ship.count({ where: { key: 'probe' } })).toBe(0);
   });
-  it('completes only a persisted canonical Flak batch and leaves legacy defence rows inert', async () => {
+  it('completes canonical Flak and Rail batches while leaving null-marked legacy defence rows inert', async () => {
     const n = slot++; const user = await prisma.user.create({ data: { email: `ship-flak-${n}@example.com`, username: `ship-flak-${n}`, passwordHash: 'x', status: 'ACTIVE', emailVerifiedAt: NOW } });
     const planet = await prisma.planet.create({ data: { ownerId: user.id, name: `Flak ${n}`, galaxy: 7, system: 8, slot: n, planetType: 'TEMPERATE', temperature: 1, solarIndex: 1, lastProductionAt: NOW } });
     const canonical = await prisma.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: 'flakTurret', itemType: 'defence', canonicalDefenceKey: 'flakTurret', quantity: 3, remaining: 3, costAlloy: 6000, costHeliox: 0, costAether: 0, durationSeconds: 300, completesAt: NOW } });
     expect(await completeShipyardBatch(prisma, canonical.id, NOW)).toBe('completed');
     expect(await completeShipyardBatch(prisma, canonical.id, NOW)).toBe('complete');
+    const rail = await prisma.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: 'railBattery', itemType: 'defence', canonicalDefenceKey: 'railBattery', quantity: 1, remaining: 1, costAlloy: 6000, costHeliox: 2000, costAether: 0, durationSeconds: 300, completesAt: NOW } });
+    expect(await completeShipyardBatch(prisma, rail.id, NOW)).toBe('completed');
+    expect(await completeShipyardBatch(prisma, rail.id, NOW)).toBe('complete');
     const legacy = await prisma.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: 'railBattery', itemType: 'defence', quantity: 7, remaining: 7, costAlloy: 1, costHeliox: 1, costAether: 0, durationSeconds: 1, completesAt: NOW } });
     expect(await completeShipyardBatch(prisma, legacy.id, NOW)).toBe('missing');
     expect(await prisma.defence.findUniqueOrThrow({ where: { planetId_key: { planetId: planet.id, key: 'flakTurret' } } })).toMatchObject({ count: 3 });
-    expect(await prisma.defence.count({ where: { planetId: planet.id, key: 'railBattery' } })).toBe(0);
+    expect(await prisma.defence.findUniqueOrThrow({ where: { planetId_key: { planetId: planet.id, key: 'railBattery' } } })).toMatchObject({ count: 1 });
+    expect(await prisma.defence.count({ where: { planetId: planet.id, key: 'railBattery' } })).toBe(1);
+    expect(await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: legacy.id } })).toMatchObject({ status: 'PENDING', canonicalDefenceKey: null });
     const queue = { add: jest.fn(), getJob: jest.fn() };
     await reconcilePendingShipyardJobs(prisma, queue as never, NOW);
     expect(queue.add).not.toHaveBeenCalled();

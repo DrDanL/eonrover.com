@@ -46,7 +46,7 @@ router.get<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   ]);
   const buildingLevels = Object.fromEntries(buildings.map((building) => [building.key, building.level]));
   const researchLevels = Object.fromEntries(research.map((row) => [row.key, row.level]));
-  const active = queue.find((item) => item.status === 'PENDING' && (item.itemType === 'ship' || (item.itemType === 'defence' && item.canonicalDefenceKey === 'flakTurret' && item.itemKey === 'flakTurret')));
+  const active = queue.find((item) => item.status === 'PENDING' && (item.itemType === 'ship' || (item.itemType === 'defence' && item.canonicalDefenceKey === item.itemKey && isActiveShipyardDefenceKey(item.itemKey))));
   const resources = { alloy: settled.alloy, heliox: settled.heliox, aether: settled.aether };
   const defenceCatalog = DEFENCE_CATALOGUE.map((entry) => {
     const evaluated = evaluateDefenceCatalogue({ id: entry.id, shipyardLevel: buildingLevels.shipyard ?? 0, economySpeed: config.economySpeed, buildingLevels, researchLevels, durationForBaseSeconds: shipyardDurationForCatalogue });
@@ -60,9 +60,9 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const parsed = startSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error); return; }
   const isShip = parsed.data.key in SHIPYARD_BY_ID;
-  const isFlak = isActiveShipyardDefenceKey(parsed.data.key);
-  if (!isShip && !isFlak) { sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.'); return; }
-  const key = parsed.data.key as ShipKey | 'flakTurret';
+  const isDefence = isActiveShipyardDefenceKey(parsed.data.key);
+  if (!isShip && !isDefence) { sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.'); return; }
+  const key = parsed.data.key as ShipKey | 'flakTurret' | 'railBattery';
   if (!await assertOwnedPlanet(req.params.planetId, req.user!.id)) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
   const config = await getUniverseConfig(); const startedAt = new Date();
   await completeDueShipyardForPlanet(prisma, req.params.planetId, startedAt);
@@ -79,7 +79,7 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         if (!planet || planet.ownerId !== account.id) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Planet not found');
         await tx.$queryRaw`SELECT "id" FROM "ShipyardQueueItem" WHERE "planetId" = ${planet.id} AND "status" = 'PENDING' FOR UPDATE`;
         if (await tx.shipyardQueueItem.findFirst({ where: { planetId: planet.id, status: 'PENDING' }, select: { id: true } })) throw new AppError(409, ERROR_CODES.CONSTRUCTION_IN_PROGRESS, 'Ship construction is already in progress on this planet.');
-        const definition = isFlak ? DEFENCES.flakTurret : SHIPS[key as ShipKey];
+        const definition = isDefence ? DEFENCES[key as 'flakTurret' | 'railBattery'] : SHIPS[key as ShipKey];
         if (!definition) throw new AppError(400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.');
         const buildings = await tx.building.findMany({ where: { planetId: planet.id } });
         const buildingLevels = Object.fromEntries(buildings.map((row) => [row.key, row.level]));
@@ -93,7 +93,7 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         const durationSeconds = shipyardDurationForCatalogue(definition.buildTimeSeconds, buildingLevels.shipyard ?? 0, config.economySpeed) * parsed.data.quantity;
         const completesAt = new Date(startedAt.getTime() + durationSeconds * 1000);
         await tx.planet.update({ where: { id: planet.id }, data: { alloy: synced.planet.alloy - cost.alloy, heliox: synced.planet.heliox - cost.heliox, aether: synced.planet.aether - cost.aether } });
-        return tx.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: key, itemType: isFlak ? 'defence' : 'ship', canonicalDefenceKey: isFlak ? 'flakTurret' : null, quantity: parsed.data.quantity, remaining: parsed.data.quantity, costAlloy: cost.alloy, costHeliox: cost.heliox, costAether: cost.aether, durationSeconds, startedAt, completesAt } });
+        return tx.shipyardQueueItem.create({ data: { planetId: planet.id, itemKey: key, itemType: isDefence ? 'defence' : 'ship', canonicalDefenceKey: isDefence ? key : null, quantity: parsed.data.quantity, remaining: parsed.data.quantity, costAlloy: cost.alloy, costHeliox: cost.heliox, costAether: cost.aether, durationSeconds, startedAt, completesAt } });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       break;
     } catch (error) {

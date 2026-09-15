@@ -33,15 +33,22 @@ test('a completed Shipyard level 4 unlocks a Colony Ship without planned propuls
   assert.equal(colonyShip.meetsRequirements, true);
 });
 
-test('defence catalogue has stable allowlisted availability and only Flak Turret is constructible', () => {
-  assert.deepEqual(DEFENCE_CATALOGUE.map((entry) => [entry.id, entry.availability]), [['flakTurret', 'ACTIVE'], ['railBattery', 'COMING_LATER'], ['planetaryShield', 'COMING_LATER']]);
+test('defence catalogue has stable allowlisted availability for Flak and Rail only', () => {
+  assert.deepEqual(DEFENCE_CATALOGUE.map((entry) => [entry.id, entry.availability]), [['flakTurret', 'ACTIVE'], ['railBattery', 'ACTIVE'], ['planetaryShield', 'COMING_LATER']]);
   assert.deepEqual(new Set(DEFENCE_CATALOGUE.map((entry) => entry.id)), new Set(Object.keys(DEFENCES)));
   assert.equal(isActiveShipyardDefenceKey('flakTurret'), true);
-  assert.equal(isActiveShipyardDefenceKey('railBattery'), false);
+  assert.equal(isActiveShipyardDefenceKey('railBattery'), true);
   assert.equal(isActiveShipyardDefenceKey('unknown'), false);
   const flak = evaluateDefenceCatalogue({ id: 'flakTurret', shipyardLevel: 1, economySpeed: 1, buildingLevels: { shipyard: 1 }, researchLevels: {}, durationForBaseSeconds: shipyardDurationForCatalogue });
   assert.deepEqual(flak.cost, { alloy: 2000, heliox: 0, aether: 0 });
   assert.equal(flak.durationSeconds, shipyardDurationForCatalogue(600, 1, 1));
   assert.deepEqual(flak.statistics, { attack: 40, shield: 10, armour: 2000 });
   assert.equal(flak.meetsRequirements, true);
+  const railLocked = evaluateDefenceCatalogue({ id: 'railBattery', shipyardLevel: 4, economySpeed: 1, buildingLevels: { shipyard: 4 }, researchLevels: { weaponTech: 1 }, durationForBaseSeconds: shipyardDurationForCatalogue });
+  assert.equal(railLocked.meetsRequirements, false);
+  assert.deepEqual(railLocked.requirements.map((requirement) => [requirement.id, requirement.requiredLevel, requirement.currentLevel, requirement.met]), [['shipyard', 4, 4, true], ['weaponTech', 2, 1, false]]);
+  const rail = evaluateDefenceCatalogue({ id: 'railBattery', shipyardLevel: 4, economySpeed: 1, buildingLevels: { shipyard: 4 }, researchLevels: { weaponTech: 2 }, durationForBaseSeconds: shipyardDurationForCatalogue });
+  assert.equal(rail.meetsRequirements, true);
+  assert.deepEqual(rail.cost, { alloy: 6000, heliox: 2000, aether: 0 });
+  assert.equal(rail.durationSeconds, shipyardDurationForCatalogue(1500, 4, 1));
 });

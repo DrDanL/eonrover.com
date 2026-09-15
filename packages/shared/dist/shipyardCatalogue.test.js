@@ -33,15 +33,22 @@ const index_1 = require("./index");
     strict_1.default.deepEqual(colonyShip.requirements, [{ id: 'shipyard', requiredLevel: 4, currentLevel: 4, met: true, type: 'building' }]);
     strict_1.default.equal(colonyShip.meetsRequirements, true);
 });
-(0, node_test_1.default)('defence catalogue has stable allowlisted availability and only Flak Turret is constructible', () => {
-    strict_1.default.deepEqual(index_1.DEFENCE_CATALOGUE.map((entry) => [entry.id, entry.availability]), [['flakTurret', 'ACTIVE'], ['railBattery', 'COMING_LATER'], ['planetaryShield', 'COMING_LATER']]);
+(0, node_test_1.default)('defence catalogue has stable allowlisted availability for Flak and Rail only', () => {
+    strict_1.default.deepEqual(index_1.DEFENCE_CATALOGUE.map((entry) => [entry.id, entry.availability]), [['flakTurret', 'ACTIVE'], ['railBattery', 'ACTIVE'], ['planetaryShield', 'COMING_LATER']]);
     strict_1.default.deepEqual(new Set(index_1.DEFENCE_CATALOGUE.map((entry) => entry.id)), new Set(Object.keys(index_1.DEFENCES)));
     strict_1.default.equal((0, index_1.isActiveShipyardDefenceKey)('flakTurret'), true);
-    strict_1.default.equal((0, index_1.isActiveShipyardDefenceKey)('railBattery'), false);
+    strict_1.default.equal((0, index_1.isActiveShipyardDefenceKey)('railBattery'), true);
     strict_1.default.equal((0, index_1.isActiveShipyardDefenceKey)('unknown'), false);
     const flak = (0, index_1.evaluateDefenceCatalogue)({ id: 'flakTurret', shipyardLevel: 1, economySpeed: 1, buildingLevels: { shipyard: 1 }, researchLevels: {}, durationForBaseSeconds: index_1.shipyardDurationForCatalogue });
     strict_1.default.deepEqual(flak.cost, { alloy: 2000, heliox: 0, aether: 0 });
     strict_1.default.equal(flak.durationSeconds, (0, index_1.shipyardDurationForCatalogue)(600, 1, 1));
     strict_1.default.deepEqual(flak.statistics, { attack: 40, shield: 10, armour: 2000 });
     strict_1.default.equal(flak.meetsRequirements, true);
+    const railLocked = (0, index_1.evaluateDefenceCatalogue)({ id: 'railBattery', shipyardLevel: 4, economySpeed: 1, buildingLevels: { shipyard: 4 }, researchLevels: { weaponTech: 1 }, durationForBaseSeconds: index_1.shipyardDurationForCatalogue });
+    strict_1.default.equal(railLocked.meetsRequirements, false);
+    strict_1.default.deepEqual(railLocked.requirements.map((requirement) => [requirement.id, requirement.requiredLevel, requirement.currentLevel, requirement.met]), [['shipyard', 4, 4, true], ['weaponTech', 2, 1, false]]);
+    const rail = (0, index_1.evaluateDefenceCatalogue)({ id: 'railBattery', shipyardLevel: 4, economySpeed: 1, buildingLevels: { shipyard: 4 }, researchLevels: { weaponTech: 2 }, durationForBaseSeconds: index_1.shipyardDurationForCatalogue });
+    strict_1.default.equal(rail.meetsRequirements, true);
+    strict_1.default.deepEqual(rail.cost, { alloy: 6000, heliox: 2000, aether: 0 });
+    strict_1.default.equal(rail.durationSeconds, (0, index_1.shipyardDurationForCatalogue)(1500, 4, 1));
 });

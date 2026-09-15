@@ -9,11 +9,11 @@ export interface DefenceCatalogueEntry {
 /**
  * The defence catalogue is deliberately separate from ships.  It provides the
  * sole allowlisted source for a future defence presentation and construction
- * command.  Only Flak Turrets are enabled in this bounded stage.
+ * command. Shipyard activation stays deliberately allowlisted.
  */
 export declare const DEFENCE_CATALOGUE: readonly DefenceCatalogueEntry[];
 export declare const DEFENCE_BY_ID: Readonly<Record<DefenceKey, DefenceCatalogueEntry>>;
-export declare const ACTIVE_SHIPYARD_DEFENCE_KEYS: readonly ["flakTurret"];
+export declare const ACTIVE_SHIPYARD_DEFENCE_KEYS: readonly ["flakTurret", "railBattery"];
 export type ActiveShipyardDefenceKey = (typeof ACTIVE_SHIPYARD_DEFENCE_KEYS)[number];
 export declare function isActiveShipyardDefenceKey(value: unknown): value is ActiveShipyardDefenceKey;
 export declare function evaluateDefenceCatalogue(input: {

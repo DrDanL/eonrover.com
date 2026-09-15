@@ -174,8 +174,8 @@ describe('read-only Shipyard catalogue', () => {
   it('starts, cancels, and completes only a canonical Flak Turret batch', async () => {
     const owner = await player('shipyard-flak');
     await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, aether: 1_000, lastProductionAt: new Date() } });
-    const rejectedLegacy = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(400);
-    expect(rejectedLegacy.body.code).toBe('BAD_REQUEST');
+    const rejectedRail = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(409);
+    expect(rejectedRail.body.code).toBe('PREREQUISITES_NOT_MET');
     expect(await prisma.shipyardQueueItem.count()).toBe(0);
 
     const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'flakTurret', quantity: 2 }).expect(201);
@@ -193,6 +193,29 @@ describe('read-only Shipyard catalogue', () => {
     expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
   });
 
+  it('starts, cancels, and completes only a canonical Rail Battery batch after Shipyard and Weapon Technology prerequisites', async () => {
+    const owner = await player('shipyard-rail');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, aether: 1_000, lastProductionAt: new Date() } });
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(409);
+    expect(await prisma.shipyardQueueItem.count({ where: { planetId: owner.planet.id } })).toBe(0);
+    await prisma.building.update({ where: { planetId_key: { planetId: owner.planet.id, key: 'shipyard' } }, data: { level: 4 } });
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(409);
+    await prisma.research.create({ data: { userId: owner.user.id, key: 'weaponTech', level: 2 } });
+    const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(201);
+    const queueItem = await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: started.body.queueItem.id } });
+    expect(queueItem).toMatchObject({ itemKey: 'railBattery', itemType: 'defence', canonicalDefenceKey: 'railBattery', quantity: 1, costAlloy: 6000, costHeliox: 2000, costAether: 0 });
+    expect(started.body.queueItem).toMatchObject({ shipName: 'Rail Battery', cost: { alloy: 6000, heliox: 2000, aether: 0 }, cancellation: { refundPercentage: 50, refund: { alloy: 3000, heliox: 1000, aether: 0 } } });
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: 4000, heliox: 3000 });
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${queueItem.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    expect(await prisma.planet.findUniqueOrThrow({ where: { id: owner.planet.id } })).toMatchObject({ alloy: 7000, heliox: 4000 });
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, lastProductionAt: new Date() } });
+    const accepted = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'railBattery', quantity: 1 }).expect(201);
+    await prisma.shipyardQueueItem.update({ where: { id: accepted.body.queueItem.id }, data: { completesAt: new Date(Date.now() - 1) } });
+    await Promise.all([completeShipyardBatch(prisma, accepted.body.queueItem.id), completeShipyardBatch(prisma, accepted.body.queueItem.id)]);
+    expect(await prisma.defence.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'railBattery' } } })).toMatchObject({ count: 1 });
+    expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
+  });
+
   it('projects an allowlisted defence catalogue without promoting legacy rows', async () => {
     const owner = await player('shipyard-defence-read');
     await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, aether: 1_000, lastProductionAt: new Date() } });
@@ -201,7 +224,7 @@ describe('read-only Shipyard catalogue', () => {
     const response = await request(app).get(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).expect(200);
     expect(response.body.defences).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'flakTurret', availability: 'ACTIVE', owned: 3, quantity: { min: 1, max: 100 } }),
-      expect.objectContaining({ id: 'railBattery', availability: 'COMING_LATER', availabilityReason: 'Coming later.' }),
+      expect.objectContaining({ id: 'railBattery', availability: 'ACTIVE', meetsRequirements: false, availabilityReason: 'Available with Shipyard level 4 and Weapon Technology level 2.' }),
       expect.objectContaining({ id: 'planetaryShield', availability: 'COMING_LATER', availabilityReason: 'Coming later.' }),
     ]));
     expect(response.body.defences.map((defence: { id: string }) => defence.id)).toEqual(['flakTurret', 'railBattery', 'planetaryShield']);

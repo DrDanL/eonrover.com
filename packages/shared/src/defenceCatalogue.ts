@@ -13,17 +13,17 @@ export interface DefenceCatalogueEntry {
 /**
  * The defence catalogue is deliberately separate from ships.  It provides the
  * sole allowlisted source for a future defence presentation and construction
- * command.  Only Flak Turrets are enabled in this bounded stage.
+ * command. Shipyard activation stays deliberately allowlisted.
  */
 export const DEFENCE_CATALOGUE: readonly DefenceCatalogueEntry[] = [
   { id: 'flakTurret', displayOrder: 10, availability: 'ACTIVE', availabilityMessage: 'Available for Shipyard construction.' },
-  { id: 'railBattery', displayOrder: 20, availability: 'COMING_LATER', availabilityMessage: 'Coming later.' },
+  { id: 'railBattery', displayOrder: 20, availability: 'ACTIVE', availabilityMessage: 'Available with Shipyard level 4 and Weapon Technology level 2.' },
   { id: 'planetaryShield', displayOrder: 30, availability: 'COMING_LATER', availabilityMessage: 'Coming later.' },
 ] as const;
 
 export const DEFENCE_BY_ID = Object.freeze(Object.fromEntries(DEFENCE_CATALOGUE.map((entry) => [entry.id, entry]))) as Readonly<Record<DefenceKey, DefenceCatalogueEntry>>;
 
-export const ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret'] as const satisfies readonly DefenceKey[];
+export const ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret', 'railBattery'] as const satisfies readonly DefenceKey[];
 export type ActiveShipyardDefenceKey = (typeof ACTIVE_SHIPYARD_DEFENCE_KEYS)[number];
 
 export function isActiveShipyardDefenceKey(value: unknown): value is ActiveShipyardDefenceKey {

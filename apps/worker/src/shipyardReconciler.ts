@@ -1,5 +1,5 @@
 import { Queue } from 'bullmq';
-import { completeShipyardBatch } from '@eonrover/shared';
+import { completeShipyardBatch, isActiveShipyardDefenceKey } from '@eonrover/shared';
 
 export const SHIPYARD_RECONCILIATION_INTERVAL_MS = 30_000;
 export const SHIPYARD_RECONCILIATION_BATCH_SIZE = 100;
@@ -11,7 +11,7 @@ type CompletionQueue = Pick<Queue, 'add' | 'getJob'>;
 function isLive(state: string): boolean { return ['active', 'delayed', 'prioritized', 'waiting', 'waiting-children'].includes(state); }
 function isCanonicalQueueItem(item: { itemKey: string; itemType: string; canonicalDefenceKey?: string | null }): boolean {
   return (item.itemType === 'ship' && ['scout', 'transporter', 'colonyShip', 'corvette', 'frigate', 'recycler', 'probe'].includes(item.itemKey))
-    || (item.itemType === 'defence' && item.itemKey === 'flakTurret' && item.canonicalDefenceKey === 'flakTurret');
+    || (item.itemType === 'defence' && item.canonicalDefenceKey === item.itemKey && isActiveShipyardDefenceKey(item.itemKey));
 }
 export interface ShipyardReconciliationResult { scanned: number; completed: number; scheduled: number; existing: number; failed: number; }
 

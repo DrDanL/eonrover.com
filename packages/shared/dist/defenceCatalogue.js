@@ -7,15 +7,15 @@ const constants_1 = require("./constants");
 /**
  * The defence catalogue is deliberately separate from ships.  It provides the
  * sole allowlisted source for a future defence presentation and construction
- * command.  Only Flak Turrets are enabled in this bounded stage.
+ * command. Shipyard activation stays deliberately allowlisted.
  */
 exports.DEFENCE_CATALOGUE = [
     { id: 'flakTurret', displayOrder: 10, availability: 'ACTIVE', availabilityMessage: 'Available for Shipyard construction.' },
-    { id: 'railBattery', displayOrder: 20, availability: 'COMING_LATER', availabilityMessage: 'Coming later.' },
+    { id: 'railBattery', displayOrder: 20, availability: 'ACTIVE', availabilityMessage: 'Available with Shipyard level 4 and Weapon Technology level 2.' },
     { id: 'planetaryShield', displayOrder: 30, availability: 'COMING_LATER', availabilityMessage: 'Coming later.' },
 ];
 exports.DEFENCE_BY_ID = Object.freeze(Object.fromEntries(exports.DEFENCE_CATALOGUE.map((entry) => [entry.id, entry])));
-exports.ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret'];
+exports.ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret', 'railBattery'];
 function isActiveShipyardDefenceKey(value) {
     return typeof value === 'string' && exports.ACTIVE_SHIPYARD_DEFENCE_KEYS.includes(value);
 }
