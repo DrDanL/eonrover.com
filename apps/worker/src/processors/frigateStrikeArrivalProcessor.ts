@@ -34,6 +34,10 @@ export async function processFrigateStrikeArrivalJob(job: Job<FrigateStrikeArriv
   const outcome = await settleCanonicalFrigateStrike(prisma, job.data.missionId, new Date(), {
     scheduleReturnWakeup: (missionId, now) => scheduleFrigateStrikeReturnWakeup(prisma, frigateStrikeArrivalQueue, missionId, now),
   });
+  // `unavailable` means the authoritative transaction exhausted its bounded
+  // retry budget. Let BullMQ retry the same deterministic wake-up rather than
+  // acknowledging it as settled.
+  if (outcome === 'unavailable') throw new Error('Canonical Frigate strike settlement is temporarily unavailable.');
   if (outcome !== 'early') return outcome;
   const canonical = await wakeup(job.data.missionId);
   if (!canonical || canonical.dueAt.getTime() <= Date.now()) return 'noop';

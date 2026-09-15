@@ -27,7 +27,9 @@ export async function reconcilePendingFrigateStrikeArrivalJobs(
 ): Promise<FrigateStrikeArrivalReconciliationResult> {
   const result: FrigateStrikeArrivalReconciliationResult = { scanned: 0, completed: 0, scheduled: 0, existing: 0, skipped: 0, failed: 0 };
   const missions = await database.fleetMission.findMany({ where: { missionType: 'ATTACK', status: { in: ['OUTBOUND', 'RETURNING'] }, frigateStrikePhase: { in: ['OUTBOUND', 'RETURNING'] }, frigateStrikeOriginPlanetId: { not: null }, frigateStrikeTargetPlanetId: { not: null }, frigateStrikeAttackerId: { not: null }, frigateStrikeDefenderId: { not: null } }, orderBy: { id: 'asc' }, take: Math.min(batchSize, FRIGATE_STRIKE_RECONCILIATION_BATCH_SIZE), select: { id: true, frigateStrikePhase: true, arrivesAt: true, returnsAt: true } });
-  for (const mission of missions) {
+  // Keep the in-process bound even if an adapter returns more rows than the
+  // requested Prisma `take`, matching the established Corvette reconciler.
+  for (const mission of missions.slice(0, FRIGATE_STRIKE_RECONCILIATION_BATCH_SIZE)) {
     result.scanned += 1;
     try {
       const dueAt = mission.frigateStrikePhase === 'OUTBOUND' ? mission.arrivesAt : mission.returnsAt;
