@@ -7,20 +7,27 @@ import StatusPanel from '@/components/StatusPanel';
 import { apiGet, apiPost } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
 import { useGameCommand } from '@/lib/GameCommandContext';
-import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetStrikesResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
+import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetFrigateStrikeCommandResponse, FleetFrigateStrikesResponse, FleetStrikesResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
 import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
 
 function duration(seconds: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} minutes`;
 }
 
-type FleetMode = 'deploy' | 'colonise' | 'transport' | 'espionage' | 'strike';
+type FleetMode = 'deploy' | 'colonise' | 'transport' | 'espionage' | 'strike' | 'frigate';
 
-const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport', 'espionage', 'strike'];
+const fleetModes: FleetMode[] = ['deploy', 'colonise', 'transport', 'espionage', 'strike', 'frigate'];
 
 const emptyCargo: ResourceAmounts = { alloy: 0, heliox: 0, aether: 0 };
 
 type EspionageTarget = { galaxy: number; system: number; slot: number };
+type FrigateTargetInput = { galaxy: string; system: string; position: string };
+
+function positiveInteger(value: string): number | null {
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
 
 function queryCoordinate(value: string | null, maximum: number): number | null {
   if (!value || !/^[1-9]\d*$/.test(value)) return null;
@@ -35,6 +42,18 @@ function queryEspionageTarget(searchParams: URLSearchParams): EspionageTarget | 
   return galaxy !== null && system !== null && slot !== null ? { galaxy, system, slot } : null;
 }
 
+function frigateEligibilityMessage(code: FleetFrigateStrikeCommandResponse['eligibility']['code']): string {
+  switch (code) {
+    case 'ELIGIBLE': return 'This command is currently eligible. The server checks the target again when it launches.';
+    case 'INVALID_TARGET': return 'Choose a different same-galaxy coordinate. The target cannot be this origin.';
+    case 'TARGET_UNAVAILABLE': return 'This coordinate is not available for a Frigate strike.';
+    case 'TARGET_PROTECTED': return 'This target is protected and cannot be struck now.';
+    case 'STRIKE_IN_PROGRESS': return 'This origin already has a Frigate strike in progress.';
+    case 'INSUFFICIENT_FRIGATES': return 'This origin does not have the selected number of available Frigates.';
+    case 'INSUFFICIENT_HELIOX': return 'This origin does not have enough Heliox for the server-calculated round trip.';
+  }
+}
+
 export default function FleetPage() {
   const { summary, loading: commandLoading, refresh: refreshCommand } = useGameCommand();
   const searchParams = useSearchParams();
@@ -42,6 +61,8 @@ export default function FleetPage() {
   const now = useTicker();
   const [mode, setMode] = useState<FleetMode>('deploy');
   const espionageTarget = useMemo(() => queryEspionageTarget(searchParams), [searchParams]);
+  const [frigateTarget, setFrigateTarget] = useState<FrigateTargetInput>({ galaxy: '', system: '', position: '' });
+  const [frigateQuantity, setFrigateQuantity] = useState(1);
   const load = useCallback(async (): Promise<FleetDeploymentsResponse | null> => {
     if (!originPlanetId) return null;
     return apiGet<FleetDeploymentsResponse>(`/api/fleet/deployments?originPlanetId=${encodeURIComponent(originPlanetId)}`);
@@ -87,6 +108,39 @@ export default function FleetPage() {
     error: strikeError,
     reload: reloadStrike,
   } = useApiData(loadStrike);
+  const frigateCommandTarget = useMemo(() => {
+    const galaxy = positiveInteger(frigateTarget.galaxy);
+    const system = positiveInteger(frigateTarget.system);
+    const position = positiveInteger(frigateTarget.position);
+    return galaxy !== null && system !== null && position !== null ? { galaxy, system, position } : null;
+  }, [frigateTarget]);
+  const loadFrigateStrike = useCallback(async (): Promise<FleetFrigateStrikesResponse | null> => {
+    if (!originPlanetId || mode !== 'frigate') return null;
+    return apiGet<FleetFrigateStrikesResponse>(`/api/fleet/frigate-strikes?originPlanetId=${encodeURIComponent(originPlanetId)}`);
+  }, [originPlanetId, mode]);
+  const {
+    data: frigateData,
+    loading: frigateLoading,
+    error: frigateError,
+    reload: reloadFrigate,
+  } = useApiData(loadFrigateStrike);
+  const loadFrigateCommand = useCallback(async (): Promise<FleetFrigateStrikeCommandResponse | null> => {
+    if (!originPlanetId || mode !== 'frigate' || !frigateCommandTarget) return null;
+    const query = new URLSearchParams({
+      originPlanetId,
+      galaxy: String(frigateCommandTarget.galaxy),
+      system: String(frigateCommandTarget.system),
+      position: String(frigateCommandTarget.position),
+      quantity: String(frigateQuantity),
+    });
+    return apiGet<FleetFrigateStrikeCommandResponse>(`/api/fleet/frigate-strikes/command?${query.toString()}`);
+  }, [originPlanetId, mode, frigateCommandTarget, frigateQuantity]);
+  const {
+    data: frigateCommandData,
+    loading: frigateCommandLoading,
+    error: frigateCommandError,
+    reload: reloadFrigateCommand,
+  } = useApiData(loadFrigateCommand);
   const [destinationPlanetId, setDestinationPlanetId] = useState('');
   const [speed, setSpeed] = useState<number | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -104,6 +158,8 @@ export default function FleetPage() {
   const [strikeQuantity, setStrikeQuantity] = useState(1);
   const [strikeConfirmation, setStrikeConfirmation] = useState(false);
   const [strikeSubmitting, setStrikeSubmitting] = useState(false);
+  const [frigateConfirmation, setFrigateConfirmation] = useState(false);
+  const [frigateSubmitting, setFrigateSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const expiryRefresh = useRef<string | null>(null);
@@ -111,11 +167,21 @@ export default function FleetPage() {
   const transportExpiryRefresh = useRef<string | null>(null);
   const espionageExpiryRefresh = useRef<string | null>(null);
   const strikeExpiryRefresh = useRef<string | null>(null);
+  const frigateExpiryRefresh = useRef<string | null>(null);
   const active = data?.activeDeployment ?? null;
   const activeColonization = colonizationData?.activeColonization ?? null;
   const activeTransport = transportData?.activeTransport ?? null;
   const activeEspionage = espionageData?.activeEspionage ?? null;
   const activeStrike = strikeData?.activeStrike ?? null;
+  const activeFrigateStrike = frigateData?.activeFrigateStrike ?? null;
+  const currentFrigateCommand = frigateCommandData
+    && frigateCommandTarget
+    && frigateCommandData.quantity === frigateQuantity
+    && frigateCommandData.target.coordinates.galaxy === frigateCommandTarget.galaxy
+    && frigateCommandData.target.coordinates.system === frigateCommandTarget.system
+    && frigateCommandData.target.coordinates.slot === frigateCommandTarget.position
+    ? frigateCommandData
+    : null;
   const ships = data?.selectedOrigin.ships ?? [];
 
   useEffect(() => {
@@ -131,6 +197,9 @@ export default function FleetPage() {
     setEspionageConfirmation(false);
     setStrikeQuantity(1);
     setStrikeConfirmation(false);
+    setFrigateTarget({ galaxy: '', system: '', position: '' });
+    setFrigateQuantity(1);
+    setFrigateConfirmation(false);
     setActionError(null);
     setActionSuccess(null);
     expiryRefresh.current = null;
@@ -138,6 +207,7 @@ export default function FleetPage() {
     transportExpiryRefresh.current = null;
     espionageExpiryRefresh.current = null;
     strikeExpiryRefresh.current = null;
+    frigateExpiryRefresh.current = null;
   }, [originPlanetId]);
 
   useEffect(() => {
@@ -213,6 +283,19 @@ export default function FleetPage() {
   }, [activeStrike, now, reloadStrike, refreshCommand]);
 
   useEffect(() => {
+    if (!activeFrigateStrike) {
+      frigateExpiryRefresh.current = null;
+      return;
+    }
+    const dueAt = activeFrigateStrike.phase === 'RETURNING' ? activeFrigateStrike.returnsAt : activeFrigateStrike.arrivesAt;
+    const refreshKey = `${activeFrigateStrike.phase}:${dueAt}`;
+    if (now < Date.parse(dueAt) || frigateExpiryRefresh.current === refreshKey) return;
+    frigateExpiryRefresh.current = refreshKey;
+    void reloadFrigate();
+    refreshCommand();
+  }, [activeFrigateStrike, now, reloadFrigate, refreshCommand]);
+
+  useEffect(() => {
     if (mode !== 'transport' || activeTransport?.phase !== 'AWAITING_DESTINATION_CAPACITY') return;
     const interval = window.setInterval(() => {
       void reloadTransport();
@@ -255,6 +338,14 @@ export default function FleetPage() {
     && strikeQuantity >= 1
     && strikeQuantity <= maxStrikeQuantity
     && !strikeSubmitting;
+  const maxFrigateQuantity = frigateData?.selectedOrigin.maximumQuantity ?? 0;
+  const canReviewFrigate = !activeFrigateStrike
+    && frigateCommandTarget !== null
+    && Number.isSafeInteger(frigateQuantity)
+    && frigateQuantity >= 1
+    && frigateQuantity <= maxFrigateQuantity
+    && currentFrigateCommand?.eligibility.eligible === true
+    && !frigateSubmitting;
 
   function setQuantity(key: string, maximum: number, value: number) {
     const safe = Number.isFinite(value) ? Math.floor(value) : 0;
@@ -374,6 +465,39 @@ export default function FleetPage() {
     }
   }
 
+  function setFrigateCoordinate(key: keyof FrigateTargetInput, value: string) {
+    setFrigateTarget((current) => ({ ...current, [key]: value }));
+    setFrigateConfirmation(false);
+  }
+
+  function setSafeFrigateQuantity(value: number) {
+    const safe = Number.isFinite(value) ? Math.floor(value) : 1;
+    setFrigateQuantity(Math.max(1, Math.min(maxFrigateQuantity || 1, safe)));
+    setFrigateConfirmation(false);
+  }
+
+  async function launchFrigateStrike() {
+    if (!originPlanetId || !frigateCommandTarget || activeFrigateStrike || !frigateConfirmation || !canReviewFrigate) return;
+    setFrigateSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      await apiPost('/api/fleet/frigate-strikes', {
+        originPlanetId,
+        target: frigateCommandTarget,
+        quantity: frigateQuantity,
+      });
+      setFrigateConfirmation(false);
+      await Promise.all([reloadFrigate(), reloadFrigateCommand()]);
+      refreshCommand();
+      setActionSuccess('Frigate strike accepted. The server-confirmed strike state is now shown below.');
+    } catch (failure) {
+      setActionError(getErrorMessage(failure));
+    } finally {
+      setFrigateSubmitting(false);
+    }
+  }
+
   function changeMode(nextMode: FleetMode) {
     setMode(nextMode);
     setActionError(null);
@@ -382,6 +506,7 @@ export default function FleetPage() {
     setTransportConfirmation(false);
     setEspionageConfirmation(false);
     setStrikeConfirmation(false);
+    setFrigateConfirmation(false);
   }
 
   function handleModeKey(event: KeyboardEvent<HTMLButtonElement>) {
@@ -409,14 +534,17 @@ export default function FleetPage() {
                   ? 'Move resources between your own planets. Cargo is delivered only when the destination can hold it, and Transporters return automatically.'
                   : mode === 'espionage'
                     ? 'Send one Probe to a public Galaxy coordinate. Intelligence gathering only: no cargo, recall, combat or mission controls are available.'
-                    : 'Launch a no-loot Corvette strike at a public same-galaxy coordinate. Surviving Corvettes return automatically.'}
+                    : mode === 'strike'
+                      ? 'Launch a no-loot Corvette strike at a public same-galaxy coordinate. Surviving Corvettes return automatically.'
+                      : 'Launch a no-loot Frigate strike at a public same-galaxy coordinate. Survivors return automatically; combat results are available separately later.'}
           </p>
-          <div className="button-row" role="tablist" aria-label="Fleet command mode">
+          <div className="button-row" role="tablist" aria-label="Fleet command mode" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
             <button id="fleet-mode-deploy" type="button" role="tab" aria-selected={mode === 'deploy'} aria-controls="fleet-mode-panel" tabIndex={mode === 'deploy' ? 0 : -1} onClick={() => changeMode('deploy')} onKeyDown={handleModeKey}>Deploy</button>
             <button id="fleet-mode-colonise" type="button" role="tab" aria-selected={mode === 'colonise'} aria-controls="fleet-mode-panel" tabIndex={mode === 'colonise' ? 0 : -1} onClick={() => changeMode('colonise')} onKeyDown={handleModeKey}>Colonise</button>
             <button id="fleet-mode-transport" type="button" role="tab" aria-selected={mode === 'transport'} aria-controls="fleet-mode-panel" tabIndex={mode === 'transport' ? 0 : -1} onClick={() => changeMode('transport')} onKeyDown={handleModeKey}>Transport</button>
             <button id="fleet-mode-espionage" type="button" role="tab" aria-selected={mode === 'espionage'} aria-controls="fleet-mode-panel" tabIndex={mode === 'espionage' ? 0 : -1} onClick={() => changeMode('espionage')} onKeyDown={handleModeKey}>Espionage</button>
             <button id="fleet-mode-strike" type="button" role="tab" aria-selected={mode === 'strike'} aria-controls="fleet-mode-panel" tabIndex={mode === 'strike' ? 0 : -1} onClick={() => changeMode('strike')} onKeyDown={handleModeKey}>Strike</button>
+            <button id="fleet-mode-frigate" type="button" role="tab" aria-selected={mode === 'frigate'} aria-controls="fleet-mode-panel" tabIndex={mode === 'frigate' ? 0 : -1} onClick={() => changeMode('frigate')} onKeyDown={handleModeKey}>Frigate Strike</button>
           </div>
       </div>
       {commandLoading && !originPlanetId ? <StatusPanel message="Loading selected planet..." /> : null}
@@ -430,6 +558,8 @@ export default function FleetPage() {
       {mode === 'espionage' && espionageError && !espionageData ? <StatusPanel tone="error" title="Espionage unavailable" message={espionageError} /> : null}
       {mode === 'strike' && strikeLoading && !strikeData ? <StatusPanel message="Loading authoritative strike state..." /> : null}
       {mode === 'strike' && strikeError && !strikeData ? <StatusPanel tone="error" title="Strike unavailable" message={strikeError} /> : null}
+      {mode === 'frigate' && frigateLoading && !frigateData ? <StatusPanel message="Loading authoritative Frigate strike state..." /> : null}
+      {mode === 'frigate' && frigateError && !frigateData ? <StatusPanel tone="error" title="Frigate strike unavailable" message={frigateError} /> : null}
       {actionError ? <div className="alert alert-error" role="alert">{actionError}</div> : null}
       {actionSuccess ? <p className="alert" role="status">{actionSuccess}</p> : null}
       {!commandLoading && !originPlanetId ? <StatusPanel title="No selected planet" message="Select an owned planet before preparing a deployment." /> : null}
@@ -698,6 +828,88 @@ export default function FleetPage() {
             <div className="button-row">
               <button type="button" onClick={() => setStrikeConfirmation(false)} disabled={strikeSubmitting}>Change strike</button>
               <button type="button" className="btn btn-primary" onClick={() => void launchStrike()} disabled={strikeSubmitting}>{strikeSubmitting ? 'Submitting strike…' : 'Confirm strike'}</button>
+            </div>
+          </div>}
+        </div>}
+      </div> : null}
+      {mode === 'frigate' && frigateData ? <div id="fleet-mode-panel" role="tabpanel" aria-labelledby="fleet-mode-frigate" className="stack">
+        <div className="panel stack" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Selected origin</h2>
+          <p style={{ margin: 0 }}>{formatCoords(frigateData.selectedOrigin.coordinates)}</p>
+          <dl className="research-details">
+            <div><dt>Available Heliox</dt><dd>{formatNumber(frigateData.selectedOrigin.heliox)}</dd></div>
+            <div><dt>Available Frigates</dt><dd>{formatNumber(frigateData.selectedOrigin.availableFrigates)}</dd></div>
+            <div><dt>Safe command maximum</dt><dd>{formatNumber(frigateData.selectedOrigin.maximumQuantity)}</dd></div>
+          </dl>
+        </div>
+
+        {activeFrigateStrike ? <div className="panel stack" role="status" aria-live="polite">
+          <h2 style={{ margin: 0 }}>Frigate strike in progress</h2>
+          <p style={{ margin: 0 }}><strong>{formatCoords(frigateData.selectedOrigin.coordinates)}</strong> → <strong>{formatCoords(activeFrigateStrike.target.coordinates)}</strong></p>
+          <dl className="research-details">
+            <div><dt>Phase</dt><dd>{enumLabel(activeFrigateStrike.phase)}</dd></div>
+            <div><dt>Departed</dt><dd>{formatDateTime(activeFrigateStrike.departedAt)}</dd></div>
+            <div><dt>Arrival</dt><dd>{formatDateTime(activeFrigateStrike.arrivesAt)}</dd></div>
+            <div><dt>Return</dt><dd>{formatDateTime(activeFrigateStrike.returnsAt)}</dd></div>
+          </dl>
+          {currentFrigateCommand && currentFrigateCommand.target.coordinates.galaxy === activeFrigateStrike.target.coordinates.galaxy && currentFrigateCommand.target.coordinates.system === activeFrigateStrike.target.coordinates.system && currentFrigateCommand.target.coordinates.slot === activeFrigateStrike.target.coordinates.slot && currentFrigateCommand.estimate ? <dl className="research-details">
+            <div><dt>Frigates requested</dt><dd>{formatNumber(currentFrigateCommand.quantity)}</dd></div>
+            <div><dt>Server command fuel estimate</dt><dd>{formatNumber(currentFrigateCommand.estimate.fuelHeliox)} Heliox</dd></div>
+            <div><dt>Server command duration estimate</dt><dd>{duration(currentFrigateCommand.estimate.durationSeconds)}</dd></div>
+          </dl> : null}
+          {(() => {
+            const dueAt = activeFrigateStrike.phase === 'RETURNING' ? activeFrigateStrike.returnsAt : activeFrigateStrike.arrivesAt;
+            return <p style={{ margin: 0 }}>{now >= Date.parse(dueAt) ? 'Confirming Frigate strike state with the server…' : `${formatRelativeCountdown(dueAt, now)} until the next server-confirmed strike event`}</p>;
+          })()}
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Another Frigate strike cannot launch from this origin until survivors return or the mission completes. This mode carries no cargo and has no loot, raid, recall or mixed-fleet option. Combat results are added separately.</p>
+        </div> : <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Prepare Frigate strike</h2>
+          <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Enter a public same-galaxy coordinate. The server alone validates availability, protection, fuel, timing and combat. Planetary Shield is not presented as beatable here.</p>
+          <fieldset className="stack" disabled={frigateSubmitting}>
+            <legend>Target coordinate</legend>
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+              {(['galaxy', 'system', 'position'] as const).map((field) => <label key={field} htmlFor={`frigate-target-${field}`}>{field === 'position' ? 'Position' : enumLabel(field)}
+                <input
+                  id={`frigate-target-${field}`}
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="numeric"
+                  value={frigateTarget[field]}
+                  onChange={(event) => setFrigateCoordinate(field, event.target.value)}
+                  aria-describedby="frigate-form-help"
+                  required
+                />
+              </label>)}
+            </div>
+          </fieldset>
+          <label htmlFor="frigate-quantity">Frigates to send
+            <div className="button-row">
+              <button type="button" onClick={() => setSafeFrigateQuantity(frigateQuantity - 1)} disabled={frigateSubmitting || frigateQuantity <= 1} aria-label="Decrease Frigate quantity">−</button>
+              <input id="frigate-quantity" type="number" min="1" max={maxFrigateQuantity} step="1" inputMode="numeric" value={frigateQuantity} onChange={(event) => setSafeFrigateQuantity(Number(event.target.value))} disabled={frigateSubmitting || maxFrigateQuantity < 1} aria-describedby="frigate-form-help" required />
+              <button type="button" onClick={() => setSafeFrigateQuantity(frigateQuantity + 1)} disabled={frigateSubmitting || frigateQuantity >= maxFrigateQuantity} aria-label="Increase Frigate quantity">+</button>
+            </div>
+          </label>
+          <p id="frigate-form-help" style={{ margin: 0, color: 'var(--color-text-muted)' }}>Use whole numbers only. Frigate Strike is same-galaxy only, has no cargo, loot, raid, recall or mixed fleet, and returns surviving Frigates automatically.</p>
+          {!frigateCommandTarget ? <p className="alert" role="status">Enter a positive galaxy, system and position to request the server command state.</p> : null}
+          {frigateCommandLoading && frigateCommandTarget ? <p role="status">Checking the authoritative command state…</p> : null}
+          {frigateCommandError && frigateCommandTarget ? <p className="alert alert-error" role="alert">{frigateCommandError}</p> : null}
+          {currentFrigateCommand ? <div className="panel stack" aria-live="polite">
+            <h3 style={{ margin: 0 }}>Server command state</h3>
+            <p style={{ margin: 0 }}>Target: <strong>{formatCoords(currentFrigateCommand.target.coordinates)}</strong></p>
+            <p style={{ margin: 0 }} role="status">{frigateEligibilityMessage(currentFrigateCommand.eligibility.code)}</p>
+            {currentFrigateCommand.estimate ? <dl className="research-details">
+              <div><dt>Server-estimated round-trip fuel</dt><dd>{formatNumber(currentFrigateCommand.estimate.fuelHeliox)} Heliox</dd></div>
+              <div><dt>Server-estimated outbound duration</dt><dd>{duration(currentFrigateCommand.estimate.durationSeconds)}</dd></div>
+              <div><dt>Affordability</dt><dd>{currentFrigateCommand.affordability?.affordable ? 'Available now' : 'Insufficient Heliox'}</dd></div>
+            </dl> : <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>A travel estimate is available only for a valid same-galaxy coordinate.</p>}
+          </div> : null}
+          {!frigateConfirmation ? <button type="button" className="btn btn-primary" disabled={!canReviewFrigate} onClick={() => setFrigateConfirmation(true)}>Review Frigate strike</button> : <div className="panel stack" role="status" aria-live="polite">
+            <h3 style={{ margin: 0 }}>Confirm Frigate strike</h3>
+            <p style={{ margin: 0 }}>Send {formatNumber(frigateQuantity)} Frigate{frigateQuantity === 1 ? '' : 's'} from {formatCoords(frigateData.selectedOrigin.coordinates)} to {frigateCommandTarget ? formatCoords({ galaxy: frigateCommandTarget.galaxy, system: frigateCommandTarget.system, slot: frigateCommandTarget.position }) : 'the selected coordinate'}. The server reserves the accepted Frigates and calculates timing and Heliox. There is no cargo, loot, raid, recall or mixed-fleet option; survivors return automatically.</p>
+            <div className="button-row">
+              <button type="button" onClick={() => setFrigateConfirmation(false)} disabled={frigateSubmitting}>Change command</button>
+              <button type="button" className="btn btn-primary" onClick={() => void launchFrigateStrike()} disabled={frigateSubmitting}>{frigateSubmitting ? 'Submitting Frigate strike…' : 'Confirm Frigate strike'}</button>
             </div>
           </div>}
         </div>}

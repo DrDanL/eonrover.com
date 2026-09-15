@@ -450,6 +450,41 @@ export interface FleetStrikesResponse {
   } | null;
 }
 
+export type FrigateStrikeEligibilityCode =
+  | 'ELIGIBLE'
+  | 'INVALID_TARGET'
+  | 'TARGET_UNAVAILABLE'
+  | 'TARGET_PROTECTED'
+  | 'STRIKE_IN_PROGRESS'
+  | 'INSUFFICIENT_FRIGATES'
+  | 'INSUFFICIENT_HELIOX';
+
+export interface SafeFrigateStrikeState {
+  phase: 'OUTBOUND' | 'RETURNING';
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  departedAt: string;
+  arrivesAt: string;
+  returnsAt: string;
+}
+
+export interface FleetFrigateStrikesResponse {
+  selectedOrigin: {
+    coordinates: { galaxy: number; system: number; slot: number };
+    heliox: number;
+    availableFrigates: number;
+    maximumQuantity: number;
+  };
+  activeFrigateStrike: SafeFrigateStrikeState | null;
+}
+
+export interface FleetFrigateStrikeCommandResponse extends FleetFrigateStrikesResponse {
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  quantity: number;
+  eligibility: { eligible: boolean; code: FrigateStrikeEligibilityCode };
+  estimate: { durationSeconds: number; fuelHeliox: number } | null;
+  affordability: { requiredHeliox: number; affordable: boolean } | null;
+}
+
 export type GalaxySlot =
   | { slot: number; occupancy: 'empty' }
   | { slot: number; occupancy: 'unavailable' }
