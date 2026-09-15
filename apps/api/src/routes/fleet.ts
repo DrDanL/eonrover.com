@@ -1,5 +1,11 @@
 import { FleetMission, MissionStatus, MissionType } from '@prisma/client';
-import { canonicalDeployShips, ResourceAmounts, SHIPS } from '@eonrover/shared';
+import {
+  canonicalDeployShips,
+  GALAXY_COORDINATE_BOUNDS,
+  planFrigateStrike,
+  ResourceAmounts,
+  SHIPS,
+} from '@eonrover/shared';
 import { RequestHandler, Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
@@ -16,6 +22,9 @@ import { settleCanonicalEspionageProbe } from '../services/espionageProbeComplet
 import { EspionageProbeLaunchError, launchCanonicalEspionageProbe } from '../services/espionageProbeLaunchService';
 import { settleCanonicalCorvetteStrike } from '../services/corvetteStrikeCompletionService';
 import { CorvetteStrikeLaunchError, launchCanonicalCorvetteStrike } from '../services/corvetteStrikeLaunchService';
+import { settleCanonicalFrigateStrike } from '../services/frigateStrikeCompletionService';
+import { FrigateStrikeLaunchError, launchCanonicalFrigateStrike } from '../services/frigateStrikeLaunchService';
+import { getUniverseConfig } from '../services/gameConfig';
 
 const router = Router();
 router.use(requireAuth);
@@ -63,6 +72,24 @@ const strikeLaunchSchema = z.object({
     slot: safeCoordinate,
   }).strict(),
   corvettes: z.number().int().min(1).max(100).refine(Number.isSafeInteger),
+}).strict();
+const frigateStrikeQuerySchema = z.object({ originPlanetId: z.string().uuid() }).strict();
+const strictPositiveIntegerQuery = z.string().regex(/^[1-9]\d*$/).transform(Number).refine(Number.isSafeInteger);
+const frigateStrikeCommandQuerySchema = z.object({
+  originPlanetId: z.string().uuid(),
+  galaxy: strictPositiveIntegerQuery,
+  system: strictPositiveIntegerQuery,
+  position: strictPositiveIntegerQuery,
+  quantity: strictPositiveIntegerQuery.refine((value) => value >= 1 && value <= 100),
+}).strict();
+const frigateStrikeLaunchSchema = z.object({
+  originPlanetId: z.string().uuid(),
+  target: z.object({
+    galaxy: safeCoordinate,
+    system: safeCoordinate,
+    position: safeCoordinate,
+  }).strict(),
+  quantity: z.number().int().min(1).max(100).refine(Number.isSafeInteger),
 }).strict();
 
 // Deploy planning accepts integer percentages from 10 through 100. These are
@@ -181,6 +208,27 @@ type StrikeMissionForPresentation = Pick<FleetMission,
   corvetteStrikeTargetPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
 };
 
+type SafeFrigateStrikeMission = {
+  phase: 'OUTBOUND' | 'RETURNING';
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  departedAt: Date;
+  arrivesAt: Date;
+  returnsAt: Date;
+};
+
+type FrigateStrikeMissionForPresentation = Pick<FleetMission,
+  'id' | 'originId' | 'targetId' | 'targetGalaxy' | 'targetSystem' | 'targetSlot'
+  | 'missionType' | 'status' | 'speedPercent' | 'departedAt' | 'arrivesAt' | 'returnsAt'
+  | 'frigateStrikeOriginPlanetId' | 'frigateStrikeTargetPlanetId'
+  | 'frigateStrikeAttackerId' | 'frigateStrikeDefenderId' | 'frigateStrikeShips'
+  | 'frigateStrikeOutboundFuelHeliox' | 'frigateStrikeReturnFuelHeliox'
+  | 'frigateStrikeOutboundDurationSeconds' | 'frigateStrikeReturnDurationSeconds'
+  | 'frigateStrikePhase'
+> & {
+  frigateStrikeOriginPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
+  frigateStrikeTargetPlanet: { id: string; ownerId: string; galaxy: number; system: number; slot: number } | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -211,6 +259,12 @@ function safeCorvetteManifest(value: unknown): { corvette: number } | null {
   if (!isRecord(value) || Object.keys(value).length !== 1 || typeof value.corvette !== 'number') return null;
   if (!Number.isSafeInteger(value.corvette) || value.corvette < 1 || value.corvette > 100) return null;
   return { corvette: value.corvette };
+}
+
+function safeFrigateManifest(value: unknown): { frigate: number } | null {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || typeof value.frigate !== 'number') return null;
+  if (!Number.isSafeInteger(value.frigate) || value.frigate < 1 || value.frigate > 100) return null;
+  return { frigate: value.frigate };
 }
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
@@ -668,6 +722,100 @@ function sendStrikeLaunchError(res: Parameters<RequestHandler>[1], error: Corvet
   }
 }
 
+function frigateStrikeSelect() {
+  return {
+    id: true, originId: true, targetId: true, targetGalaxy: true, targetSystem: true, targetSlot: true,
+    missionType: true, status: true, speedPercent: true, departedAt: true, arrivesAt: true, returnsAt: true,
+    frigateStrikeOriginPlanetId: true, frigateStrikeTargetPlanetId: true,
+    frigateStrikeAttackerId: true, frigateStrikeDefenderId: true, frigateStrikeShips: true,
+    frigateStrikeOutboundFuelHeliox: true, frigateStrikeReturnFuelHeliox: true,
+    frigateStrikeOutboundDurationSeconds: true, frigateStrikeReturnDurationSeconds: true,
+    frigateStrikePhase: true,
+    frigateStrikeOriginPlanet: { select: { id: true, ownerId: true, galaxy: true, system: true, slot: true } },
+    frigateStrikeTargetPlanet: { select: { id: true, ownerId: true, galaxy: true, system: true, slot: true } },
+  } as const;
+}
+
+async function activeFrigateStrikeForOrigin(originPlanetId: string, accountId: string): Promise<FrigateStrikeMissionForPresentation | null> {
+  return prisma.fleetMission.findFirst({
+    where: {
+      missionType: MissionType.ATTACK,
+      status: { in: [MissionStatus.OUTBOUND, MissionStatus.RETURNING] },
+      frigateStrikeOriginPlanetId: originPlanetId,
+      frigateStrikeAttackerId: accountId,
+      frigateStrikeTargetPlanetId: { not: null },
+      frigateStrikeDefenderId: { not: null },
+      frigateStrikePhase: { in: ['OUTBOUND', 'RETURNING'] },
+    },
+    orderBy: [{ arrivesAt: 'asc' }, { id: 'asc' }],
+    select: frigateStrikeSelect(),
+  });
+}
+
+function presentFrigateStrike(mission: FrigateStrikeMissionForPresentation, accountId: string, originPlanetId: string): SafeFrigateStrikeMission | null {
+  const origin = mission.frigateStrikeOriginPlanet;
+  const target = mission.frigateStrikeTargetPlanet;
+  const phase = mission.frigateStrikePhase;
+  const expectedStatus = phase === 'OUTBOUND' ? MissionStatus.OUTBOUND : MissionStatus.RETURNING;
+  if (
+    mission.missionType !== MissionType.ATTACK
+    || (phase !== 'OUTBOUND' && phase !== 'RETURNING')
+    || mission.status !== expectedStatus
+    || !origin || !target
+    || origin.id !== originPlanetId || origin.ownerId !== accountId || target.ownerId === accountId
+    || mission.originId !== origin.id || mission.targetId !== target.id
+    || mission.frigateStrikeOriginPlanetId !== origin.id || mission.frigateStrikeTargetPlanetId !== target.id
+    || mission.frigateStrikeAttackerId !== accountId || mission.frigateStrikeDefenderId !== target.ownerId
+    || mission.targetGalaxy !== target.galaxy || mission.targetSystem !== target.system || mission.targetSlot !== target.slot
+    || mission.speedPercent !== 100 || !safeFrigateManifest(mission.frigateStrikeShips)
+    || !isSafeNonNegativeInteger(mission.frigateStrikeOutboundFuelHeliox)
+    || !isSafeNonNegativeInteger(mission.frigateStrikeReturnFuelHeliox)
+    || !isSafeNonNegativeInteger(mission.frigateStrikeOutboundDurationSeconds) || mission.frigateStrikeOutboundDurationSeconds <= 0
+    || !isSafeNonNegativeInteger(mission.frigateStrikeReturnDurationSeconds) || mission.frigateStrikeReturnDurationSeconds <= 0
+    || !Number.isFinite(mission.departedAt.getTime()) || !Number.isFinite(mission.arrivesAt.getTime())
+    || !mission.returnsAt || !Number.isFinite(mission.returnsAt.getTime())
+    || mission.arrivesAt.getTime() - mission.departedAt.getTime() !== mission.frigateStrikeOutboundDurationSeconds * 1_000
+  ) return null;
+  return {
+    phase,
+    target: { coordinates: { galaxy: target.galaxy, system: target.system, slot: target.slot } },
+    departedAt: mission.departedAt,
+    arrivesAt: mission.arrivesAt,
+    returnsAt: mission.returnsAt,
+  };
+}
+
+async function settleFrigateStrikeForOrigin(originPlanetId: string, accountId: string, currentTime: Date): Promise<boolean> {
+  const active = await activeFrigateStrikeForOrigin(originPlanetId, accountId);
+  if (!active) return true;
+  return (await settleCanonicalFrigateStrike(active.id, currentTime)) !== 'unavailable';
+}
+
+function sendFrigateStrikeLaunchError(res: Parameters<RequestHandler>[1], error: FrigateStrikeLaunchError): void {
+  switch (error.code) {
+    case 'ORIGIN_NOT_OWNED':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found');
+      return;
+    case 'INVALID_TARGET':
+      sendError(res, 400, ERROR_CODES.BAD_REQUEST, error.message);
+      return;
+    case 'TARGET_UNAVAILABLE':
+      sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Strike target not found');
+      return;
+    case 'TARGET_PROTECTED':
+    case 'STRIKE_IN_PROGRESS':
+    case 'INSUFFICIENT_FRIGATES':
+      sendError(res, 409, ERROR_CODES.CONFLICT, error.message);
+      return;
+    case 'INSUFFICIENT_HELIOX':
+      sendError(res, 402, ERROR_CODES.INSUFFICIENT_RESOURCES, error.message);
+      return;
+    case 'STRIKE_UNAVAILABLE':
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, error.message);
+      return;
+  }
+}
+
 function sendLaunchError(res: Parameters<RequestHandler>[1], error: DeployLaunchError): void {
   switch (error.code) {
     case 'ORIGIN_NOT_OWNED':
@@ -1046,6 +1194,146 @@ router.post('/strikes', asyncHandler(async (req, res) => {
     res.status(201).json({ activeStrike: presentation });
   } catch (error) {
     if (error instanceof CorvetteStrikeLaunchError) { sendStrikeLaunchError(res, error); return; }
+    throw error;
+  }
+}));
+
+router.get('/frigate-strikes', asyncHandler(async (req, res) => {
+  const parsed = frigateStrikeQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  const origin = await prisma.planet.findUnique({ where: { id: parsed.data.originPlanetId } });
+  if (!origin || origin.ownerId !== req.user!.id) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+
+  const now = new Date();
+  if (!await settleFrigateStrikeForOrigin(origin.id, req.user!.id, now)) {
+    sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Frigate strike state could not be refreshed. Please try again.');
+    return;
+  }
+  const [{ planet: settledOrigin }, frigates, active] = await Promise.all([
+    syncPlanetResources(origin.id, now),
+    prisma.ship.findUnique({
+      where: { planetId_key: { planetId: origin.id, key: 'frigate' } },
+      select: { count: true },
+    }),
+    activeFrigateStrikeForOrigin(origin.id, req.user!.id),
+  ]);
+  res.json({
+    selectedOrigin: {
+      coordinates: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+      heliox: settledOrigin.heliox,
+      availableFrigates: frigates?.count ?? 0,
+      maximumQuantity: Math.min(100, frigates?.count ?? 0),
+    },
+    activeFrigateStrike: active ? presentFrigateStrike(active, req.user!.id, origin.id) : null,
+  });
+}));
+
+router.get('/frigate-strikes/command', asyncHandler(async (req, res) => {
+  const parsed = frigateStrikeCommandQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  const origin = await prisma.planet.findUnique({ where: { id: parsed.data.originPlanetId } });
+  if (!origin || origin.ownerId !== req.user!.id) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
+
+  const now = new Date();
+  if (!await settleFrigateStrikeForOrigin(origin.id, req.user!.id, now)) {
+    sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Frigate strike state could not be refreshed. Please try again.');
+    return;
+  }
+  const target = { galaxy: parsed.data.galaxy, system: parsed.data.system, slot: parsed.data.position };
+  const [{ planet: settledOrigin }, frigates, active, candidate, config] = await Promise.all([
+    syncPlanetResources(origin.id, now),
+    prisma.ship.findUnique({
+      where: { planetId_key: { planetId: origin.id, key: 'frigate' } },
+      select: { count: true },
+    }),
+    activeFrigateStrikeForOrigin(origin.id, req.user!.id),
+    prisma.planet.findUnique({
+      where: { galaxy_system_slot: target },
+      select: { ownerId: true, owner: { select: { status: true, emailVerifiedAt: true, protectedUntil: true } } },
+    }),
+    getUniverseConfig(),
+  ]);
+  const withinBounds = target.galaxy >= GALAXY_COORDINATE_BOUNDS.galaxy.min
+    && target.galaxy <= GALAXY_COORDINATE_BOUNDS.galaxy.max
+    && target.system >= GALAXY_COORDINATE_BOUNDS.system.min
+    && target.system <= GALAXY_COORDINATE_BOUNDS.system.max
+    && target.slot >= GALAXY_COORDINATE_BOUNDS.slot.min
+    && target.slot <= GALAXY_COORDINATE_BOUNDS.slot.max;
+  let estimate: { durationSeconds: number; fuelHeliox: number } | null = null;
+  if (withinBounds && settledOrigin.galaxy === target.galaxy
+    && (settledOrigin.system !== target.system || settledOrigin.slot !== target.slot)) {
+    try {
+      const plan = planFrigateStrike({
+        origin: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+        target,
+        quantity: parsed.data.quantity,
+        fleetSpeed: config.fleetSpeed,
+      });
+      estimate = {
+        durationSeconds: plan.outboundDurationSeconds,
+        fuelHeliox: plan.outboundFuelHeliox + plan.returnFuelHeliox,
+      };
+    } catch {
+      // Invalid client coordinates are represented by the command eligibility
+      // result below; planner details are not a source of gameplay state.
+    }
+  }
+
+  let code: 'ELIGIBLE' | 'INVALID_TARGET' | 'TARGET_UNAVAILABLE' | 'TARGET_PROTECTED' | 'STRIKE_IN_PROGRESS' | 'INSUFFICIENT_FRIGATES' | 'INSUFFICIENT_HELIOX' = 'ELIGIBLE';
+  if (!withinBounds || settledOrigin.galaxy !== target.galaxy || (settledOrigin.system === target.system && settledOrigin.slot === target.slot)) {
+    code = 'INVALID_TARGET';
+  } else if (!candidate || candidate.ownerId === req.user!.id || candidate.owner.status !== 'ACTIVE' || !candidate.owner.emailVerifiedAt) {
+    code = 'TARGET_UNAVAILABLE';
+  } else if (candidate.owner.protectedUntil && candidate.owner.protectedUntil > now) {
+    code = 'TARGET_PROTECTED';
+  } else if (active) {
+    code = 'STRIKE_IN_PROGRESS';
+  } else if ((frigates?.count ?? 0) < parsed.data.quantity) {
+    code = 'INSUFFICIENT_FRIGATES';
+  } else if (!estimate || settledOrigin.heliox < estimate.fuelHeliox) {
+    code = 'INSUFFICIENT_HELIOX';
+  }
+  res.json({
+    selectedOrigin: {
+      coordinates: { galaxy: settledOrigin.galaxy, system: settledOrigin.system, slot: settledOrigin.slot },
+      heliox: settledOrigin.heliox,
+      availableFrigates: frigates?.count ?? 0,
+      maximumQuantity: Math.min(100, frigates?.count ?? 0),
+    },
+    target: { coordinates: target },
+    quantity: parsed.data.quantity,
+    eligibility: { eligible: code === 'ELIGIBLE', code },
+    estimate,
+    affordability: estimate ? { requiredHeliox: estimate.fuelHeliox, affordable: settledOrigin.heliox >= estimate.fuelHeliox } : null,
+    activeFrigateStrike: active ? presentFrigateStrike(active, req.user!.id, origin.id) : null,
+  });
+}));
+
+router.post('/frigate-strikes', asyncHandler(async (req, res) => {
+  const parsed = frigateStrikeLaunchSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+  try {
+    const accepted = await launchCanonicalFrigateStrike({
+      userId: req.user!.id,
+      originPlanetId: parsed.data.originPlanetId,
+      target: {
+        galaxy: parsed.data.target.galaxy,
+        system: parsed.data.target.system,
+        slot: parsed.data.target.position,
+      },
+      quantity: parsed.data.quantity,
+    });
+    const active = await activeFrigateStrikeForOrigin(accepted.originPlanetId, req.user!.id);
+    const presentation = active ? presentFrigateStrike(active, req.user!.id, accepted.originPlanetId) : null;
+    // A completed PostgreSQL reservation remains accepted even when its
+    // best-effort Redis wake-up fails; the reconciler owns recovery.
+    if (!presentation) {
+      sendError(res, 503, ERROR_CODES.SERVICE_UNAVAILABLE, 'Frigate strike state could not be refreshed. Please try again.');
+      return;
+    }
+    res.status(201).json({ activeFrigateStrike: presentation });
+  } catch (error) {
+    if (error instanceof FrigateStrikeLaunchError) { sendFrigateStrikeLaunchError(res, error); return; }
     throw error;
   }
 }));

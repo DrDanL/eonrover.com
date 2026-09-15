@@ -25,6 +25,7 @@ import adminRoutes from './routes/admin';
 import reportRoutes from './routes/reports';
 import espionageReportRoutes from './routes/espionageReports';
 import corvetteStrikeReportRoutes from './routes/corvetteStrikeReports';
+import frigateStrikeReportRoutes from './routes/frigateStrikeReports';
 import {
   apiErrorHandler,
   apiNotFoundHandler,
@@ -87,6 +88,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.use('/api/reports', reportRoutes);
   app.use('/api/espionage/reports', espionageReportRoutes);
   app.use('/api/combat/strikes/reports', corvetteStrikeReportRoutes);
+  app.use('/api/combat/frigate-strikes/reports', frigateStrikeReportRoutes);
   app.use('/api/public', publicRoutes);
   app.use('/api/admin', adminRoutes);
 
