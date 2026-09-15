@@ -20,3 +20,4 @@ export const espionageProbeArrivalQueue = new Queue('espionage-probe-arrival-que
 // Canonical Corvette strikes use a dedicated wake-up queue; legacy fleet work
 // remains deliberately dormant.
 export const corvetteStrikeArrivalQueue = new Queue('corvette-strike-arrival-queue', { connection });
+export const frigateStrikeArrivalQueue = new Queue('frigate-strike-arrival-queue', { connection });

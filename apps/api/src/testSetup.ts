@@ -16,6 +16,7 @@ beforeEach(async () => {
     // Clean tables between tests, respecting FK order (children first).
     await prisma.$transaction([
       prisma.combatReport.deleteMany(),
+      prisma.frigateStrikeReport.deleteMany(),
       prisma.espionageProbeReport.deleteMany(),
       prisma.espionageReport.deleteMany(),
       prisma.debrisField.deleteMany(),

@@ -522,6 +522,8 @@ Universe settings (`universeSpeed`, `economySpeed`, `fleetSpeed`, `researchSpeed
 
 ## Automated testing coverage
 
+Canonical Frigate strikes are isolated from historical Corvette and legacy Fleet rows: shared Frigate planning/resolution and the dedicated arrival scheduler live under `packages/shared/src`; internal launch/scheduling wrappers live under `apps/api/src/services`; and the worker consumes only `frigate-strike-arrival-queue` with a dedicated 30-second bounded reconciler. No player-facing Frigate route or screen is introduced by this backend-only stage.
+
 | Suite | Existing coverage | Important omissions |
 | --- | --- | --- |
 | Root guard/source tests, 33 tests | Database URL/reset safety, local-launcher port selection/command scope/redaction, vertical-slice project/database/cleanup/redaction safety, and the read-only admin-page source boundary. | General browser/component/accessibility testing. |

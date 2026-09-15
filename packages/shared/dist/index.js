@@ -43,3 +43,6 @@ __exportStar(require("./espionageProbeArrivalScheduling"), exports);
 __exportStar(require("./corvetteStrike"), exports);
 __exportStar(require("./corvetteStrikeCompletion"), exports);
 __exportStar(require("./corvetteStrikeArrivalScheduling"), exports);
+__exportStar(require("./frigateStrike"), exports);
+__exportStar(require("./frigateStrikeCompletion"), exports);
+__exportStar(require("./frigateStrikeArrivalScheduling"), exports);

@@ -507,6 +507,8 @@ Do not proceed to the systems below until all of these are true:
 
 ## Current milestone and next work
 
+**Stage 16B1–B4 (in progress):** a separate canonical Frigate-only, no-loot strike lifecycle is being prepared with fixed server planning, a versioned deterministic resolver, nullable legacy-safe persistence, PostgreSQL-authoritative launch/arrival/return settlement, dedicated deterministic wake-ups, and bounded restart recovery. It does not activate a player API or UI, Planetary Shield construction, mixed Corvette/Frigate manifests, loot, debris, raids, or generic Fleet processing.
+
 The trusted vertical slice is implemented through Stage 5C2. The single active building loop now has hard energy and field-capacity gating, server-authoritative prerequisites derived only from completed building levels, a categorised development screen with actionable lock guidance, one authoritative command snapshot, persistent shell telemetry, and a useful planet overview. The current default is 180 fields; no Terraformer or other expansion mechanic is included. General ordered queues and broader systems remain separately selected future work.
 
 ## Decisions needed from the project owner

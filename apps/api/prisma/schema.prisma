@@ -56,6 +56,10 @@ model User {
   corvetteStrikeDefenderMissions FleetMission[] @relation("CorvetteStrikeDefender")
   corvetteStrikeReportsAttacker CorvetteStrikeReport[] @relation("CorvetteStrikeReportAttacker")
   corvetteStrikeReportsDefender CorvetteStrikeReport[] @relation("CorvetteStrikeReportDefender")
+  frigateStrikeAttackerMissions FleetMission[] @relation("FrigateStrikeAttacker")
+  frigateStrikeDefenderMissions FleetMission[] @relation("FrigateStrikeDefender")
+  frigateStrikeReportsAttacker FrigateStrikeReport[] @relation("FrigateStrikeReportAttacker")
+  frigateStrikeReportsDefender FrigateStrikeReport[] @relation("FrigateStrikeReportDefender")
 
   @@index([status])
 }
@@ -138,6 +142,8 @@ model Planet {
   espionageProbeReports EspionageProbeReport[] @relation("EspionageProbeReportTarget")
   corvetteStrikeOriginMissions FleetMission[] @relation("CorvetteStrikeOriginPlanet")
   corvetteStrikeTargetMissions FleetMission[] @relation("CorvetteStrikeTargetPlanet")
+  frigateStrikeOriginMissions FleetMission[] @relation("FrigateStrikeOriginPlanet")
+  frigateStrikeTargetMissions FleetMission[] @relation("FrigateStrikeTargetPlanet")
   createdByColonization FleetMission? @relation("ColonizationCreatedPlanet")
   debrisField      DebrisField?
   gateFragments    GateFragment[]
@@ -297,6 +303,14 @@ enum CorvetteStrikePhase {
   COMPLETE
 }
 
+// Canonical Frigate strikes are a separate lifecycle. Existing Corvette
+// missions retain their fixed snapshots and are never reinterpreted.
+enum FrigateStrikePhase {
+  OUTBOUND
+  RETURNING
+  COMPLETE
+}
+
 // Canonical Probe report disclosure tiers. This separate enum and report model
 // deliberately do not reinterpret legacy EspionageReport rows or their raw
 // accuracy/data payloads.
@@ -390,6 +404,26 @@ model FleetMission {
   corvetteStrikeAttackerTechnology Json?
   corvetteStrikePhase CorvetteStrikePhase?
   corvetteStrikeReport CorvetteStrikeReport?
+  // Stage 16B canonical Frigate-strike fields. Legacy ATTACK rows and all
+  // historical Corvette fields remain nullable and non-authoritative here.
+  frigateStrikeOriginPlanetId String?
+  frigateStrikeOriginPlanet Planet? @relation("FrigateStrikeOriginPlanet", fields: [frigateStrikeOriginPlanetId], references: [id], onDelete: SetNull)
+  frigateStrikeTargetPlanetId String?
+  frigateStrikeTargetPlanet Planet? @relation("FrigateStrikeTargetPlanet", fields: [frigateStrikeTargetPlanetId], references: [id], onDelete: SetNull)
+  frigateStrikeAttackerId String?
+  frigateStrikeAttacker User? @relation("FrigateStrikeAttacker", fields: [frigateStrikeAttackerId], references: [id], onDelete: SetNull)
+  frigateStrikeDefenderId String?
+  frigateStrikeDefender User? @relation("FrigateStrikeDefender", fields: [frigateStrikeDefenderId], references: [id], onDelete: SetNull)
+  frigateStrikeShips Json?
+  frigateStrikeOutboundFuelHeliox Int?
+  frigateStrikeReturnFuelHeliox Int?
+  frigateStrikeOutboundDurationSeconds Int?
+  frigateStrikeReturnDurationSeconds Int?
+  frigateStrikeResolverVersion String?
+  frigateStrikeResolverSeed String?
+  frigateStrikeAttackerTechnology Json?
+  frigateStrikePhase FrigateStrikePhase?
+  frigateStrikeReport FrigateStrikeReport?
   // Stage 9B canonical colonisation fields. Existing generic COLONIZE rows
   // remain legacy data unless all future lifecycle code explicitly supplies
   // these snapshots.
@@ -424,6 +458,12 @@ model FleetMission {
   @@index([corvetteStrikeDefenderId])
   @@index([corvetteStrikePhase, arrivesAt])
   @@index([corvetteStrikePhase, returnsAt])
+  @@index([frigateStrikeOriginPlanetId, frigateStrikePhase])
+  @@index([frigateStrikeTargetPlanetId])
+  @@index([frigateStrikeAttackerId])
+  @@index([frigateStrikeDefenderId])
+  @@index([frigateStrikePhase, arrivesAt])
+  @@index([frigateStrikePhase, returnsAt])
   @@index([colonizationAccountId])
 }
 
@@ -481,6 +521,22 @@ model CorvetteStrikeReport {
   attacker        User @relation("CorvetteStrikeReportAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
   defenderId      String
   defender        User @relation("CorvetteStrikeReportDefender", fields: [defenderId], references: [id], onDelete: Cascade)
+  createdAt       DateTime
+  resolverVersion String
+  resultSnapshot  Json
+
+  @@index([attackerId, createdAt])
+  @@index([defenderId, createdAt])
+}
+
+model FrigateStrikeReport {
+  id              String @id @default(uuid())
+  missionId       String @unique
+  mission         FleetMission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  attackerId      String
+  attacker        User @relation("FrigateStrikeReportAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
+  defenderId      String
+  defender        User @relation("FrigateStrikeReportDefender", fields: [defenderId], references: [id], onDelete: Cascade)
   createdAt       DateTime
   resolverVersion String
   resultSnapshot  Json
