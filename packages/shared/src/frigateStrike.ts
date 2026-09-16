@@ -2,14 +2,18 @@ import { DEFENCES, GALAXY_COORDINATE_BOUNDS, SHIPS } from './constants';
 import { distanceBetween, flightDurationSeconds, fuelConsumption } from './formulas';
 
 export const FRIGATE_STRIKE_SPEED_PERCENT = 100;
-export const FRIGATE_STRIKE_RESOLVER_VERSION = 'frigate-strike-v1';
+export const FRIGATE_STRIKE_V1_RESOLVER_VERSION = 'frigate-strike-v1';
+export const FRIGATE_STRIKE_V2_RESOLVER_VERSION = 'frigate-strike-v2';
+/** New launches persist v2. Accepted v1 missions remain resolved as v1. */
+export const FRIGATE_STRIKE_RESOLVER_VERSION = FRIGATE_STRIKE_V2_RESOLVER_VERSION;
+export type FrigateStrikeResolverVersion = typeof FRIGATE_STRIKE_V1_RESOLVER_VERSION | typeof FRIGATE_STRIKE_V2_RESOLVER_VERSION;
 export const FRIGATE_STRIKE_SAFETY_ROUND_CAP = 512;
 export const MIN_FRIGATE_STRIKE_QUANTITY = 1;
 export const MAX_FRIGATE_STRIKE_QUANTITY = 100;
 export type FrigateStrikeCoordinates = { galaxy: number; system: number; slot: number };
 export type FrigateStrikeTechnology = { weaponTech: number; shieldTech: number; armourTech: number };
 export type FrigateStrikePlan = { ships: { frigate: number }; speedPercent: 100; outboundDurationSeconds: number; returnDurationSeconds: number; outboundFuelHeliox: number; returnFuelHeliox: number; timing: { arrivalAfterDepartureSeconds: number; returnAfterArrivalSeconds: number } };
-export type FrigateStrikeResolution = { version: typeof FRIGATE_STRIKE_RESOLVER_VERSION; seedFingerprint: string; starting: { attacker: Record<string, number>; defender: Record<string, number> }; survivors: { attacker: Record<string, number>; defender: Record<string, number> }; losses: { attacker: Record<string, number>; defender: Record<string, number> }; rounds: Array<{ round: number; attackerLosses: Record<string, number>; defenderLosses: Record<string, number> }>; outcome: 'attacker' | 'defender' | 'draw' | 'unresolved'; termination: 'elimination' | 'stalemate' | 'safety-cap' };
+export type FrigateStrikeResolution = { version: FrigateStrikeResolverVersion; seedFingerprint: string; starting: { attacker: Record<string, number>; defender: Record<string, number> }; survivors: { attacker: Record<string, number>; defender: Record<string, number> }; losses: { attacker: Record<string, number>; defender: Record<string, number> }; rounds: Array<{ round: number; attackerLosses: Record<string, number>; defenderLosses: Record<string, number> }>; outcome: 'attacker' | 'defender' | 'draw' | 'unresolved'; termination: 'elimination' | 'stalemate' | 'safety-cap' };
 
 export class FrigateStrikeError extends Error { constructor(public readonly code: string, message: string) { super(message); this.name = 'FrigateStrikeError'; } }
 const fail = (code: string, message: string): never => { throw new FrigateStrikeError(code, message); };
@@ -58,10 +62,27 @@ function fingerprint(seed: string) { let value = 0; for (const char of seed) val
 function counts(units: Unit[]) { const value: Record<string, number> = {}; for (const unit of units) value[unit.key] = (value[unit.key] ?? 0) + 1; return value; }
 function losses(start: Record<string, number>, remaining: Record<string, number>) { const value: Record<string, number> = {}; for (const key of Object.keys(start)) { const loss = start[key] - (remaining[key] ?? 0); if (loss) value[key] = loss; } return value; }
 const damages = (shooters: Unit[], targets: Unit[]) => shooters.some((shooter) => targets.some((target) => shooter.attack > target.shield));
+function frigateV2Damages(shooters: Unit[], targets: Unit[]) {
+  const shields = targets.filter((target) => target.key === 'planetaryShield');
+  const combinedAttack = shooters.reduce((sum, shooter) => sum + shooter.attack, 0);
+  return shields.length > 0 ? shields.some((shield) => combinedAttack > shield.shield) : damages(shooters, targets);
+}
 function fire(random: () => number, shooters: Unit[], targets: Unit[]) { for (const shooter of shooters) { if (!targets.length) break; const target = targets[Math.floor(random() * targets.length)]; target.hull -= Math.max(0, shooter.attack - target.shield); } }
+/**
+ * v2 has one deliberately narrow anti-Shield rule. While any Planetary Shield
+ * remains, all surviving Frigates fire one combined, seeded salvo at exactly
+ * one Shield; they cannot also make ordinary individual attacks that phase.
+ */
+function fireFrigateV2(random: () => number, shooters: Unit[], targets: Unit[]) {
+  const shields = targets.filter((target) => target.key === 'planetaryShield');
+  if (shields.length === 0) { fire(random, shooters, targets); return; }
+  const target = shields[Math.floor(random() * shields.length)];
+  const combinedAttack = shooters.reduce((sum, shooter) => sum + shooter.attack, 0);
+  target.hull -= Math.max(0, combinedAttack - target.shield);
+}
 /** Separate, persisted Frigate policy. It deliberately leaves Corvette v1/v2 untouched. */
 export function resolveFrigateStrike(input: unknown): FrigateStrikeResolution {
-  if (!record(input) || Object.keys(input).sort().join(',') !== 'attacker,defender,seed,version' || input.version !== FRIGATE_STRIKE_RESOLVER_VERSION || typeof input.seed !== 'string') fail('INVALID_INPUT', 'Frigate strike resolution input is invalid.');
+  if (!record(input) || Object.keys(input).sort().join(',') !== 'attacker,defender,seed,version' || (input.version !== FRIGATE_STRIKE_V1_RESOLVER_VERSION && input.version !== FRIGATE_STRIKE_V2_RESOLVER_VERSION) || typeof input.seed !== 'string') fail('INVALID_INPUT', 'Frigate strike resolution input is invalid.');
   const values = input as Record<string, unknown>;
   if (!record(values.attacker)) fail('INVALID_FORCES', 'Frigate attacker snapshot is invalid.');
   const attacker = values.attacker as Record<string, unknown>;
@@ -71,15 +92,18 @@ export function resolveFrigateStrike(input: unknown): FrigateStrikeResolution {
   if (Object.keys(defender).sort().join(',') !== 'defences,ships,technology') fail('INVALID_FORCES', 'Frigate defender snapshot is invalid.');
   let attackers = snapshot({ frigate: attacker.frigates as number }, { frigate: SHIPS.frigate }, technology(attacker.technology));
   let defenders = [...snapshot(defender.ships, SHIPS, technology(defender.technology)), ...snapshot(defender.defences, DEFENCES, technology(defender.technology))];
+  const version = values.version as FrigateStrikeResolverVersion;
   const starting = { attacker: counts(attackers), defender: counts(defenders) }; const rounds: FrigateStrikeResolution['rounds'] = []; const random = rng(values.seed as string); let termination: FrigateStrikeResolution['termination'] = 'elimination';
   for (let round = 1; round <= FRIGATE_STRIKE_SAFETY_ROUND_CAP && attackers.length && defenders.length; round += 1) {
-    if (!damages(attackers, defenders) && !damages(defenders, attackers)) { termination = 'stalemate'; break; }
-    fire(random, attackers, defenders); fire(random, defenders, attackers);
+    const attackerCanDamage = version === FRIGATE_STRIKE_V2_RESOLVER_VERSION ? frigateV2Damages(attackers, defenders) : damages(attackers, defenders);
+    if (!attackerCanDamage && !damages(defenders, attackers)) { termination = 'stalemate'; break; }
+    if (version === FRIGATE_STRIKE_V2_RESOLVER_VERSION) fireFrigateV2(random, attackers, defenders); else fire(random, attackers, defenders);
+    fire(random, defenders, attackers);
     const beforeA = counts(attackers); const beforeD = counts(defenders); attackers = attackers.filter((unit) => unit.hull > 0); defenders = defenders.filter((unit) => unit.hull > 0);
     rounds.push({ round, attackerLosses: losses(beforeA, counts(attackers)), defenderLosses: losses(beforeD, counts(defenders)) });
     if (!attackers.length || !defenders.length) { termination = 'elimination'; break; }
     if (round === FRIGATE_STRIKE_SAFETY_ROUND_CAP) termination = 'safety-cap';
   }
   const survivors = { attacker: counts(attackers), defender: counts(defenders) };
-  return { version: FRIGATE_STRIKE_RESOLVER_VERSION, seedFingerprint: fingerprint(values.seed as string), starting, survivors, losses: { attacker: losses(starting.attacker, survivors.attacker), defender: losses(starting.defender, survivors.defender) }, rounds, outcome: termination === 'safety-cap' ? 'unresolved' : attackers.length && !defenders.length ? 'attacker' : defenders.length && !attackers.length ? 'defender' : 'draw', termination };
+  return { version, seedFingerprint: fingerprint(values.seed as string), starting, survivors, losses: { attacker: losses(starting.attacker, survivors.attacker), defender: losses(starting.defender, survivors.defender) }, rounds, outcome: termination === 'safety-cap' ? 'unresolved' : attackers.length && !defenders.length ? 'attacker' : defenders.length && !attackers.length ? 'defender' : 'draw', termination };
 }

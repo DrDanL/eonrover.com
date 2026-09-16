@@ -33,11 +33,12 @@ test('a completed Shipyard level 4 unlocks a Colony Ship without planned propuls
   assert.equal(colonyShip.meetsRequirements, true);
 });
 
-test('defence catalogue has stable allowlisted availability for Flak and Rail only', () => {
-  assert.deepEqual(DEFENCE_CATALOGUE.map((entry) => [entry.id, entry.availability]), [['flakTurret', 'ACTIVE'], ['railBattery', 'ACTIVE'], ['planetaryShield', 'COMING_LATER']]);
+test('defence catalogue has stable allowlisted availability for Flak, Rail, and Planetary Shield', () => {
+  assert.deepEqual(DEFENCE_CATALOGUE.map((entry) => [entry.id, entry.availability]), [['flakTurret', 'ACTIVE'], ['railBattery', 'ACTIVE'], ['planetaryShield', 'ACTIVE']]);
   assert.deepEqual(new Set(DEFENCE_CATALOGUE.map((entry) => entry.id)), new Set(Object.keys(DEFENCES)));
   assert.equal(isActiveShipyardDefenceKey('flakTurret'), true);
   assert.equal(isActiveShipyardDefenceKey('railBattery'), true);
+  assert.equal(isActiveShipyardDefenceKey('planetaryShield'), true);
   assert.equal(isActiveShipyardDefenceKey('unknown'), false);
   const flak = evaluateDefenceCatalogue({ id: 'flakTurret', shipyardLevel: 1, economySpeed: 1, buildingLevels: { shipyard: 1 }, researchLevels: {}, durationForBaseSeconds: shipyardDurationForCatalogue });
   assert.deepEqual(flak.cost, { alloy: 2000, heliox: 0, aether: 0 });
@@ -51,4 +52,10 @@ test('defence catalogue has stable allowlisted availability for Flak and Rail on
   assert.equal(rail.meetsRequirements, true);
   assert.deepEqual(rail.cost, { alloy: 6000, heliox: 2000, aether: 0 });
   assert.equal(rail.durationSeconds, shipyardDurationForCatalogue(1500, 4, 1));
+  const shieldLocked = evaluateDefenceCatalogue({ id: 'planetaryShield', shipyardLevel: 6, economySpeed: 1, buildingLevels: { shipyard: 6 }, researchLevels: { shieldTech: 3 }, durationForBaseSeconds: shipyardDurationForCatalogue });
+  assert.equal(shieldLocked.meetsRequirements, false);
+  const shield = evaluateDefenceCatalogue({ id: 'planetaryShield', shipyardLevel: 6, economySpeed: 1, buildingLevels: { shipyard: 6 }, researchLevels: { shieldTech: 4 }, durationForBaseSeconds: shipyardDurationForCatalogue });
+  assert.equal(shield.meetsRequirements, true);
+  assert.deepEqual(shield.cost, { alloy: 15000, heliox: 8000, aether: 1000 });
+  assert.equal(shield.durationSeconds, shipyardDurationForCatalogue(5400, 6, 1));
 });

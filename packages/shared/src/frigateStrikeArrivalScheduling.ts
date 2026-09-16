@@ -1,4 +1,4 @@
-import { FRIGATE_STRIKE_RESOLVER_VERSION } from './frigateStrike';
+import { FRIGATE_STRIKE_V1_RESOLVER_VERSION, FRIGATE_STRIKE_V2_RESOLVER_VERSION } from './frigateStrike';
 
 export const FRIGATE_STRIKE_ARRIVAL_JOB_NAME = 'complete-frigate-strike-arrival';
 export const FRIGATE_STRIKE_RETURN_JOB_NAME = 'complete-frigate-strike-return';
@@ -18,7 +18,7 @@ function valid(mission: any, kind: 'arrival' | 'return'): boolean {
     || mission.frigateStrikeOriginPlanet.ownerId !== mission.frigateStrikeAttacker.id || mission.frigateStrikeTargetPlanet.ownerId !== mission.frigateStrikeDefender.id || mission.frigateStrikeAttacker.id === mission.frigateStrikeDefender.id
     || mission.originId !== mission.frigateStrikeOriginPlanet.id || mission.targetId !== mission.frigateStrikeTargetPlanet.id || mission.targetGalaxy !== mission.frigateStrikeTargetPlanet.galaxy || mission.targetSystem !== mission.frigateStrikeTargetPlanet.system || mission.targetSlot !== mission.frigateStrikeTargetPlanet.slot
     || mission.speedPercent !== 100 || !record(mission.frigateStrikeShips) || Object.keys(mission.frigateStrikeShips).join(',') !== 'frigate' || !whole(mission.frigateStrikeShips.frigate) || mission.frigateStrikeShips.frigate < 1
-    || !whole(mission.frigateStrikeOutboundFuelHeliox) || !whole(mission.frigateStrikeReturnFuelHeliox) || !Number.isSafeInteger(mission.frigateStrikeOutboundDurationSeconds) || mission.frigateStrikeOutboundDurationSeconds <= 0 || !Number.isSafeInteger(mission.frigateStrikeReturnDurationSeconds) || mission.frigateStrikeReturnDurationSeconds <= 0 || mission.frigateStrikeResolverVersion !== FRIGATE_STRIKE_RESOLVER_VERSION || !Number.isFinite(mission.arrivesAt?.getTime?.())) return false;
+    || !whole(mission.frigateStrikeOutboundFuelHeliox) || !whole(mission.frigateStrikeReturnFuelHeliox) || !Number.isSafeInteger(mission.frigateStrikeOutboundDurationSeconds) || mission.frigateStrikeOutboundDurationSeconds <= 0 || !Number.isSafeInteger(mission.frigateStrikeReturnDurationSeconds) || mission.frigateStrikeReturnDurationSeconds <= 0 || (mission.frigateStrikeResolverVersion !== FRIGATE_STRIKE_V1_RESOLVER_VERSION && mission.frigateStrikeResolverVersion !== FRIGATE_STRIKE_V2_RESOLVER_VERSION) || !Number.isFinite(mission.arrivesAt?.getTime?.())) return false;
   return kind === 'arrival' ? mission.frigateStrikePhase === 'OUTBOUND' && mission.status === 'OUTBOUND' : mission.frigateStrikePhase === 'RETURNING' && mission.status === 'RETURNING' && Number.isFinite(mission.returnsAt?.getTime?.());
 }
 async function schedule(database: FrigateStrikeSchedulingDatabase, queue: FrigateStrikeSchedulingQueue, missionId: string, kind: 'arrival' | 'return', currentTime = new Date()): Promise<FrigateStrikeSchedulingOutcome> {

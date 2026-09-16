@@ -208,7 +208,9 @@ export default function FleetPage() {
     setEspionageConfirmation(false);
     setStrikeQuantity(1);
     setStrikeConfirmation(false);
-    setFrigateTarget({ galaxy: '', system: '', position: '' });
+    setFrigateTarget(searchParams.get('mode') === 'frigate-strike'
+      ? frigateHandoffTarget ?? { galaxy: '', system: '', position: '' }
+      : { galaxy: '', system: '', position: '' });
     setFrigateQuantity(1);
     setFrigateConfirmation(false);
     setActionError(null);
@@ -219,7 +221,7 @@ export default function FleetPage() {
     espionageExpiryRefresh.current = null;
     strikeExpiryRefresh.current = null;
     frigateExpiryRefresh.current = null;
-  }, [originPlanetId]);
+  }, [originPlanetId, frigateHandoffTarget, searchParams]);
 
   useEffect(() => {
     if (searchParams.get('mode') === 'espionage') setMode('espionage');

@@ -12,10 +12,10 @@ const constants_1 = require("./constants");
 exports.DEFENCE_CATALOGUE = [
     { id: 'flakTurret', displayOrder: 10, availability: 'ACTIVE', availabilityMessage: 'Available for Shipyard construction.' },
     { id: 'railBattery', displayOrder: 20, availability: 'ACTIVE', availabilityMessage: 'Available with Shipyard level 4 and Weapon Technology level 2.' },
-    { id: 'planetaryShield', displayOrder: 30, availability: 'COMING_LATER', availabilityMessage: 'Coming later.' },
+    { id: 'planetaryShield', displayOrder: 30, availability: 'ACTIVE', availabilityMessage: 'Available with Shipyard level 6 and Shield Technology level 4.' },
 ];
 exports.DEFENCE_BY_ID = Object.freeze(Object.fromEntries(exports.DEFENCE_CATALOGUE.map((entry) => [entry.id, entry])));
-exports.ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret', 'railBattery'];
+exports.ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret', 'railBattery', 'planetaryShield'];
 function isActiveShipyardDefenceKey(value) {
     return typeof value === 'string' && exports.ACTIVE_SHIPYARD_DEFENCE_KEYS.includes(value);
 }

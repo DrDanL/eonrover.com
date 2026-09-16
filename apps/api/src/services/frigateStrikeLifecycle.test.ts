@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma';
 import { frigateStrikeArrivalQueue, fleetQueue } from '../lib/redis';
-import { FRIGATE_STRIKE_RESOLVER_VERSION } from '@eonrover/shared';
+import { FRIGATE_STRIKE_RESOLVER_VERSION, FRIGATE_STRIKE_V1_RESOLVER_VERSION } from '@eonrover/shared';
 import { launchCanonicalFrigateStrike, FrigateStrikeLaunchError } from './frigateStrikeLaunchService';
 import { settleCanonicalFrigateStrike } from './frigateStrikeCompletionService';
 import { frigateStrikeArrivalJobId, frigateStrikeReturnJobId } from './frigateStrikeArrivalSchedulingService';
@@ -46,5 +46,22 @@ describe('canonical Frigate strike lifecycle', () => {
     const returnedAt = new Date((await prisma.fleetMission.findUniqueOrThrow({ where: { id: accepted.missionId } })).returnsAt!.getTime() + 1); expect(await settleCanonicalFrigateStrike(accepted.missionId, returnedAt)).toBe('returned'); expect(await settleCanonicalFrigateStrike(accepted.missionId, returnedAt)).toBe('noop');
     expect((await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: decisive.origin.id, key: 'frigate' } } })).count).toBe(1 + (snapshot.survivors.attacker.frigate ?? 0));
     const shield = await fixture({ defence: 'planetaryShield' }); const shieldMission = await launchCanonicalFrigateStrike(input(shield)); jobIds.add(frigateStrikeArrivalJobId(shieldMission.missionId)); const shieldDue = new Date((await prisma.fleetMission.findUniqueOrThrow({ where: { id: shieldMission.missionId } })).arrivesAt.getTime() + 1); expect(await settleCanonicalFrigateStrike(shieldMission.missionId, shieldDue)).toBe('arrived'); expect((await prisma.frigateStrikeReport.findUniqueOrThrow({ where: { missionId: shieldMission.missionId } }).then((value) => value.resultSnapshot as any)).resolution).toBe('stalemate');
+  });
+  it('persists v2 for new launches while an outstanding v1 Shield mission remains a stalemate', async () => {
+    const v2 = await fixture({ frigates: 12, defence: 'planetaryShield' });
+    const accepted = await launchCanonicalFrigateStrike(input(v2, 12)); jobIds.add(frigateStrikeArrivalJobId(accepted.missionId));
+    expect((await prisma.fleetMission.findUniqueOrThrow({ where: { id: accepted.missionId } })).frigateStrikeResolverVersion).toBe(FRIGATE_STRIKE_RESOLVER_VERSION);
+    const v2Due = new Date((await prisma.fleetMission.findUniqueOrThrow({ where: { id: accepted.missionId } })).arrivesAt.getTime() + 1);
+    await settleCanonicalFrigateStrike(accepted.missionId, v2Due);
+    expect((await prisma.frigateStrikeReport.findUniqueOrThrow({ where: { missionId: accepted.missionId } }).then((value) => value.resultSnapshot as any)).outcome).toBe('attacker');
+
+    const v1 = await fixture({ frigates: 12, defence: 'planetaryShield' });
+    const historical = await launchCanonicalFrigateStrike(input(v1, 12)); jobIds.add(frigateStrikeArrivalJobId(historical.missionId));
+    await prisma.fleetMission.update({ where: { id: historical.missionId }, data: { frigateStrikeResolverVersion: FRIGATE_STRIKE_V1_RESOLVER_VERSION } });
+    const v1Due = new Date((await prisma.fleetMission.findUniqueOrThrow({ where: { id: historical.missionId } })).arrivesAt.getTime() + 1);
+    await settleCanonicalFrigateStrike(historical.missionId, v1Due);
+    const report = await prisma.frigateStrikeReport.findUniqueOrThrow({ where: { missionId: historical.missionId } });
+    expect(report).toMatchObject({ resolverVersion: FRIGATE_STRIKE_V1_RESOLVER_VERSION });
+    expect((report.resultSnapshot as any).resolution).toBe('stalemate');
   });
 });

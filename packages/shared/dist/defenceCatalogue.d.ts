@@ -13,7 +13,7 @@ export interface DefenceCatalogueEntry {
  */
 export declare const DEFENCE_CATALOGUE: readonly DefenceCatalogueEntry[];
 export declare const DEFENCE_BY_ID: Readonly<Record<DefenceKey, DefenceCatalogueEntry>>;
-export declare const ACTIVE_SHIPYARD_DEFENCE_KEYS: readonly ["flakTurret", "railBattery"];
+export declare const ACTIVE_SHIPYARD_DEFENCE_KEYS: readonly ["flakTurret", "railBattery", "planetaryShield"];
 export type ActiveShipyardDefenceKey = (typeof ACTIVE_SHIPYARD_DEFENCE_KEYS)[number];
 export declare function isActiveShipyardDefenceKey(value: unknown): value is ActiveShipyardDefenceKey;
 export declare function evaluateDefenceCatalogue(input: {

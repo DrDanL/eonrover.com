@@ -18,12 +18,12 @@ export interface DefenceCatalogueEntry {
 export const DEFENCE_CATALOGUE: readonly DefenceCatalogueEntry[] = [
   { id: 'flakTurret', displayOrder: 10, availability: 'ACTIVE', availabilityMessage: 'Available for Shipyard construction.' },
   { id: 'railBattery', displayOrder: 20, availability: 'ACTIVE', availabilityMessage: 'Available with Shipyard level 4 and Weapon Technology level 2.' },
-  { id: 'planetaryShield', displayOrder: 30, availability: 'COMING_LATER', availabilityMessage: 'Coming later.' },
+  { id: 'planetaryShield', displayOrder: 30, availability: 'ACTIVE', availabilityMessage: 'Available with Shipyard level 6 and Shield Technology level 4.' },
 ] as const;
 
 export const DEFENCE_BY_ID = Object.freeze(Object.fromEntries(DEFENCE_CATALOGUE.map((entry) => [entry.id, entry]))) as Readonly<Record<DefenceKey, DefenceCatalogueEntry>>;
 
-export const ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret', 'railBattery'] as const satisfies readonly DefenceKey[];
+export const ACTIVE_SHIPYARD_DEFENCE_KEYS = ['flakTurret', 'railBattery', 'planetaryShield'] as const satisfies readonly DefenceKey[];
 export type ActiveShipyardDefenceKey = (typeof ACTIVE_SHIPYARD_DEFENCE_KEYS)[number];
 
 export function isActiveShipyardDefenceKey(value: unknown): value is ActiveShipyardDefenceKey {

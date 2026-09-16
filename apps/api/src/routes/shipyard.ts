@@ -62,7 +62,7 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
   const isShip = parsed.data.key in SHIPYARD_BY_ID;
   const isDefence = isActiveShipyardDefenceKey(parsed.data.key);
   if (!isShip && !isDefence) { sendError(res, 400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.'); return; }
-  const key = parsed.data.key as ShipKey | 'flakTurret' | 'railBattery';
+  const key = parsed.data.key as ShipKey | 'flakTurret' | 'railBattery' | 'planetaryShield';
   if (!await assertOwnedPlanet(req.params.planetId, req.user!.id)) { sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Planet not found'); return; }
   const config = await getUniverseConfig(); const startedAt = new Date();
   await completeDueShipyardForPlanet(prisma, req.params.planetId, startedAt);
@@ -79,7 +79,7 @@ router.post<{ planetId: string }>('/', asyncHandler(async (req, res) => {
         if (!planet || planet.ownerId !== account.id) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Planet not found');
         await tx.$queryRaw`SELECT "id" FROM "ShipyardQueueItem" WHERE "planetId" = ${planet.id} AND "status" = 'PENDING' FOR UPDATE`;
         if (await tx.shipyardQueueItem.findFirst({ where: { planetId: planet.id, status: 'PENDING' }, select: { id: true } })) throw new AppError(409, ERROR_CODES.CONSTRUCTION_IN_PROGRESS, 'Ship construction is already in progress on this planet.');
-        const definition = isDefence ? DEFENCES[key as 'flakTurret' | 'railBattery'] : SHIPS[key as ShipKey];
+        const definition = isDefence ? DEFENCES[key as 'flakTurret' | 'railBattery' | 'planetaryShield'] : SHIPS[key as ShipKey];
         if (!definition) throw new AppError(400, ERROR_CODES.BAD_REQUEST, 'This Shipyard item is unavailable.');
         const buildings = await tx.building.findMany({ where: { planetId: planet.id } });
         const buildingLevels = Object.fromEntries(buildings.map((row) => [row.key, row.level]));

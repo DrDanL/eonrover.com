@@ -216,6 +216,29 @@ describe('read-only Shipyard catalogue', () => {
     expect(await prisma.notification.count({ where: { userId: owner.user.id, type: 'SHIPYARD_COMPLETE' } })).toBe(1);
   });
 
+  it('starts, cancels, and completes a canonical Planetary Shield only after its existing prerequisites', async () => {
+    const owner = await player('shipyard-shield');
+    await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 40_000, heliox: 30_000, aether: 5_000, lastProductionAt: new Date() } });
+    await prisma.building.createMany({ data: [
+      { planetId: owner.planet.id, key: 'alloyStorage', level: 4 },
+      { planetId: owner.planet.id, key: 'helioxStorage', level: 4 },
+      { planetId: owner.planet.id, key: 'aetherStorage', level: 4 },
+    ] });
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'planetaryShield', quantity: 1 }).expect(409);
+    await prisma.building.update({ where: { planetId_key: { planetId: owner.planet.id, key: 'shipyard' } }, data: { level: 6 } });
+    await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'planetaryShield', quantity: 1 }).expect(409);
+    await prisma.research.create({ data: { userId: owner.user.id, key: 'shieldTech', level: 4 } });
+    const started = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'planetaryShield', quantity: 1 }).expect(201);
+    const queueItem = await prisma.shipyardQueueItem.findUniqueOrThrow({ where: { id: started.body.queueItem.id } });
+    expect(queueItem).toMatchObject({ itemKey: 'planetaryShield', itemType: 'defence', canonicalDefenceKey: 'planetaryShield', quantity: 1, costAlloy: 15_000, costHeliox: 8_000, costAether: 1_000 });
+    expect(started.body.queueItem.cancellation).toEqual({ refundPercentage: 50, refund: { alloy: 7_500, heliox: 4_000, aether: 500 } });
+    await request(app).delete(`/api/planets/${owner.planet.id}/shipyard/${queueItem.id}`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').expect(200);
+    const accepted = await request(app).post(`/api/planets/${owner.planet.id}/shipyard`).set('Cookie', owner.cookie).set('X-Eonrover-Client', '1').send({ key: 'planetaryShield', quantity: 1 }).expect(201);
+    await prisma.shipyardQueueItem.update({ where: { id: accepted.body.queueItem.id }, data: { completesAt: new Date(Date.now() - 1) } });
+    await Promise.all([completeShipyardBatch(prisma, accepted.body.queueItem.id), completeShipyardBatch(prisma, accepted.body.queueItem.id)]);
+    expect(await prisma.defence.findUniqueOrThrow({ where: { planetId_key: { planetId: owner.planet.id, key: 'planetaryShield' } } })).toMatchObject({ count: 1 });
+  });
+
   it('projects an allowlisted defence catalogue without promoting legacy rows', async () => {
     const owner = await player('shipyard-defence-read');
     await prisma.planet.update({ where: { id: owner.planet.id }, data: { alloy: 10_000, heliox: 5_000, aether: 1_000, lastProductionAt: new Date() } });
@@ -225,7 +248,7 @@ describe('read-only Shipyard catalogue', () => {
     expect(response.body.defences).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'flakTurret', availability: 'ACTIVE', owned: 3, quantity: { min: 1, max: 100 } }),
       expect.objectContaining({ id: 'railBattery', availability: 'ACTIVE', meetsRequirements: false, availabilityReason: 'Available with Shipyard level 4 and Weapon Technology level 2.' }),
-      expect.objectContaining({ id: 'planetaryShield', availability: 'COMING_LATER', availabilityReason: 'Coming later.' }),
+      expect.objectContaining({ id: 'planetaryShield', availability: 'ACTIVE', availabilityReason: 'Available with Shipyard level 6 and Shield Technology level 4.' }),
     ]));
     expect(response.body.defences.map((defence: { id: string }) => defence.id)).toEqual(['flakTurret', 'railBattery', 'planetaryShield']);
     expect(JSON.stringify(response.body.defences)).not.toContain('canonicalDefenceKey');
