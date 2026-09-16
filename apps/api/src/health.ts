@@ -2,7 +2,6 @@ import { Router } from 'express';
 
 const READINESS_TIMEOUT_MS = 1_000;
 
-type CheckStatus = 'ok' | 'unavailable';
 type DependencyCheck = () => Promise<unknown>;
 
 export interface ReadinessChecks {
@@ -10,44 +9,33 @@ export interface ReadinessChecks {
   redis: DependencyCheck;
 }
 
-interface ReadinessResult {
-  status: 'ready' | 'not_ready';
-  checks: {
-    database: CheckStatus;
-    redis: CheckStatus;
-  };
-}
-
-function runCheck(check: DependencyCheck, timeoutMs: number): Promise<CheckStatus> {
+function runCheck(check: DependencyCheck, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (status: CheckStatus) => {
+    const finish = (available: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      resolve(status);
+      resolve(available);
     };
-    const timeout = setTimeout(() => finish('unavailable'), timeoutMs);
+    const timeout = setTimeout(() => finish(false), timeoutMs);
 
     void Promise.resolve()
       .then(check)
-      .then(() => finish('ok'), () => finish('unavailable'));
+      .then(() => finish(true), () => finish(false));
   });
 }
 
 export async function checkReadiness(
   checks: ReadinessChecks,
   timeoutMs = READINESS_TIMEOUT_MS,
-): Promise<ReadinessResult> {
+): Promise<boolean> {
   const [database, redis] = await Promise.all([
     runCheck(checks.database, timeoutMs),
     runCheck(checks.redis, timeoutMs),
   ]);
 
-  return {
-    status: database === 'ok' && redis === 'ok' ? 'ready' : 'not_ready',
-    checks: { database, redis },
-  };
+  return database && redis;
 }
 
 export function createHealthRouter(checks: ReadinessChecks, timeoutMs = READINESS_TIMEOUT_MS): Router {
@@ -58,8 +46,8 @@ export function createHealthRouter(checks: ReadinessChecks, timeoutMs = READINES
   });
 
   router.get('/readyz', (_req, res) => {
-    void checkReadiness(checks, timeoutMs).then((result) => {
-      res.status(result.status === 'ready' ? 200 : 503).json(result);
+    void checkReadiness(checks, timeoutMs).then((ready) => {
+      res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
     });
   });
 

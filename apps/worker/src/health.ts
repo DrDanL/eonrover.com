@@ -2,7 +2,6 @@ import { RequestListener } from 'http';
 
 const READINESS_TIMEOUT_MS = 1_000;
 
-type CheckStatus = 'ok' | 'unavailable';
 type DependencyCheck = () => Promise<unknown>;
 
 export interface ReadinessChecks {
@@ -10,49 +9,38 @@ export interface ReadinessChecks {
   redis: DependencyCheck;
 }
 
-interface ReadinessResult {
-  status: 'ready' | 'not_ready';
-  checks: {
-    database: CheckStatus;
-    redis: CheckStatus;
-  };
-}
-
 interface HealthResponse {
   statusCode: number;
-  body: { status: 'ok' | 'not_found' } | ReadinessResult;
+  body: { status: 'ok' | 'unavailable' | 'not_found' };
 }
 
-function runCheck(check: DependencyCheck, timeoutMs: number): Promise<CheckStatus> {
+function runCheck(check: DependencyCheck, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (status: CheckStatus) => {
+    const finish = (available: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      resolve(status);
+      resolve(available);
     };
-    const timeout = setTimeout(() => finish('unavailable'), timeoutMs);
+    const timeout = setTimeout(() => finish(false), timeoutMs);
 
     void Promise.resolve()
       .then(check)
-      .then(() => finish('ok'), () => finish('unavailable'));
+      .then(() => finish(true), () => finish(false));
   });
 }
 
 export async function checkReadiness(
   checks: ReadinessChecks,
   timeoutMs = READINESS_TIMEOUT_MS,
-): Promise<ReadinessResult> {
+): Promise<boolean> {
   const [database, redis] = await Promise.all([
     runCheck(checks.database, timeoutMs),
     runCheck(checks.redis, timeoutMs),
   ]);
 
-  return {
-    status: database === 'ok' && redis === 'ok' ? 'ready' : 'not_ready',
-    checks: { database, redis },
-  };
+  return database && redis;
 }
 
 export async function healthResponse(
@@ -65,8 +53,8 @@ export async function healthResponse(
     return { statusCode: 200, body: { status: 'ok' } };
   }
   if (method === 'GET' && path === '/readyz') {
-    const result = await checkReadiness(checks, timeoutMs);
-    return { statusCode: result.status === 'ready' ? 200 : 503, body: result };
+    const ready = await checkReadiness(checks, timeoutMs);
+    return { statusCode: ready ? 200 : 503, body: { status: ready ? 'ok' : 'unavailable' } };
   }
   return { statusCode: 404, body: { status: 'not_found' } };
 }

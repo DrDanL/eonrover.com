@@ -29,10 +29,7 @@ describe('API operational probes', () => {
       .expect(200)
       .expect('Content-Type', /json/);
 
-    expect(response.body).toEqual({
-      status: 'ready',
-      checks: { database: 'ok', redis: 'ok' },
-    });
+    expect(response.body).toEqual({ status: 'ok' });
     expect(checks.database).toHaveBeenCalledTimes(1);
     expect(checks.redis).toHaveBeenCalledTimes(1);
   });
@@ -46,10 +43,7 @@ describe('API operational probes', () => {
     };
     const response = await request(createApp({ readinessChecks: checks })).get('/readyz').expect(503);
 
-    expect(response.body).toEqual({
-      status: 'not_ready',
-      checks: { database: 'unavailable', redis: 'ok' },
-    });
+    expect(response.body).toEqual({ status: 'unavailable' });
     expect(checks.database).toHaveBeenCalledTimes(1);
     expect(checks.redis).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(response.body)).not.toContain('private-db');
@@ -65,10 +59,7 @@ describe('API operational probes', () => {
     };
     const response = await request(createApp({ readinessChecks: checks })).get('/readyz').expect(503);
 
-    expect(response.body).toEqual({
-      status: 'not_ready',
-      checks: { database: 'ok', redis: 'unavailable' },
-    });
+    expect(response.body).toEqual({ status: 'unavailable' });
     expect(JSON.stringify(response.body)).not.toContain('private-cache');
     expect(JSON.stringify(response.body)).not.toContain('6379');
   });
@@ -82,10 +73,7 @@ describe('API operational probes', () => {
       .get('/readyz')
       .expect(503);
 
-    expect(response.body).toEqual({
-      status: 'not_ready',
-      checks: { database: 'unavailable', redis: 'ok' },
-    });
+    expect(response.body).toEqual({ status: 'unavailable' });
     expect(checks.redis).toHaveBeenCalledTimes(1);
   });
 

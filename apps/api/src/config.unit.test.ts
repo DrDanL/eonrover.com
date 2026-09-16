@@ -132,6 +132,18 @@ describe('parseApiConfig', () => {
     ).toThrow(/SMTP_PORT/);
   });
 
+  it('rejects known placeholder production credentials without echoing them', () => {
+    for (const override of [
+      { DATABASE_URL: 'postgresql://service:changeme@db.example.com:5432/eonrover' },
+      { REDIS_URL: 'rediss://cache:password@cache.example.com:6380' },
+    ]) {
+      let refusal: unknown;
+      try { parseApiConfig(productionEnvironment(override)); } catch (error) { refusal = error; }
+      expect(refusal).toBeInstanceOf(ApiConfigError);
+      expect((refusal as Error).message).not.toMatch(/changeme|password|db\.example|cache\.example/i);
+    }
+  });
+
   it('does not include secrets or complete URLs in errors', () => {
     const secretUrl = 'postgresql://secret_user:do-not-print@db.example.com:5432/';
     let refusal: unknown;

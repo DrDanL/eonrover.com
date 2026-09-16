@@ -1,7 +1,14 @@
 import http from 'http';
 import { getWorkerConfig } from './config';
+import { emitOperationalEvent, reconciliationCounts } from './operationalEvents';
 
-const config = getWorkerConfig();
+let config: ReturnType<typeof getWorkerConfig>;
+try {
+  config = getWorkerConfig();
+} catch (error) {
+  emitOperationalEvent({ event: 'worker.configuration_invalid' });
+  throw error;
+}
 const { Queue, Worker } = require('bullmq') as typeof import('bullmq');
 const { createRedisConnection } = require('./redis') as typeof import('./redis');
 const { prisma } = require('./prisma') as typeof import('./prisma');
@@ -54,17 +61,25 @@ const {
 } = require('./frigateStrikeArrivalReconciler') as typeof import('./frigateStrikeArrivalReconciler');
 const connection = createRedisConnection();
 
-function logCompletion(name: string) {
-  return (job: { id?: string }) => {
-    // eslint-disable-next-line no-console
-    console.log(`[${name}] completed job ${job.id}`);
-  };
+function logCompletion(queue: string) {
+  return () => emitOperationalEvent({ event: 'worker.job_completed', queue });
 }
 
-function logFailure(name: string) {
-  return (job: { id?: string } | undefined, err: Error) => {
-    // eslint-disable-next-line no-console
-    console.error(`[${name}] job ${job?.id} failed:`, err.message);
+function logFailure(queue: string) {
+  return () => emitOperationalEvent({ event: 'worker.job_failed', queue });
+}
+
+function observeReconciliation(name: string, reconcile: () => Promise<unknown>): () => Promise<unknown> {
+  return async () => {
+    emitOperationalEvent({ event: 'worker.reconciliation_started', reconciliation: name });
+    try {
+      const result = await reconcile();
+      emitOperationalEvent({ event: 'worker.reconciliation_completed', reconciliation: name, counts: reconciliationCounts(result) });
+      return result;
+    } catch (error) {
+      emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: name });
+      throw error;
+    }
   };
 }
 
@@ -103,10 +118,10 @@ for (const [name, worker] of [
 ] as const) {
   worker.on('completed', logCompletion(name));
   worker.on('failed', logFailure(name));
+  worker.on('ready', () => emitOperationalEvent({ event: 'worker.queue_registered', queue: name }));
 }
 
-// eslint-disable-next-line no-console
-console.log('Eon Rover worker started, listening for build/research/shipyard/deploy-arrival/colonization-arrival/transport-arrival/espionage-probe-arrival events. Legacy fleet jobs are intentionally not consumed.');
+emitOperationalEvent({ event: 'worker.started' });
 
 let shuttingDown = false;
 let buildingReconciliation: ReturnType<typeof startBuildingReconciliation> | undefined;
@@ -122,154 +137,100 @@ void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUnt
   .then(() => {
     if (shuttingDown) return;
     buildingReconciliation = startBuildingReconciliation(
-      () => reconcilePendingBuildingJobs(prisma, buildReconciliationQueue),
+      observeReconciliation('build', () => reconcilePendingBuildingJobs(prisma, buildReconciliationQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[build-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[build-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'build' }));
 
 void Promise.all([shipyardWorker.waitUntilReady(), shipyardReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     shipyardReconciliation = startShipyardReconciliation(
-      () => reconcilePendingShipyardJobs(prisma, shipyardReconciliationQueue),
+      observeReconciliation('shipyard', () => reconcilePendingShipyardJobs(prisma, shipyardReconciliationQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[shipyard-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[shipyard-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'shipyard' }));
 
 void Promise.all([researchWorker.waitUntilReady(), researchReconciliationQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     researchReconciliation = startResearchReconciliation(
-      () => reconcilePendingResearchJobs(prisma, researchReconciliationQueue),
+      observeReconciliation('research', () => reconcilePendingResearchJobs(prisma, researchReconciliationQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[research-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[research-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'research' }));
 
 void Promise.all([deployArrivalWorker.waitUntilReady(), deployArrivalQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     deployArrivalReconciliation = startDeployArrivalReconciliation(
-      () => reconcilePendingDeployArrivalJobs(prisma, deployArrivalQueue),
+      observeReconciliation('deploy-arrival', () => reconcilePendingDeployArrivalJobs(prisma, deployArrivalQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[deploy-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[deploy-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'deploy-arrival' }));
 
 void Promise.all([colonizationArrivalWorker.waitUntilReady(), colonizationArrivalQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     colonizationArrivalReconciliation = startColonizationArrivalReconciliation(
-      () => reconcilePendingColonizationArrivalJobs(prisma, colonizationArrivalQueue),
+      observeReconciliation('colonization-arrival', () => reconcilePendingColonizationArrivalJobs(prisma, colonizationArrivalQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[colonization-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[colonization-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'colonization-arrival' }));
 
 void Promise.all([transportArrivalWorker.waitUntilReady(), transportArrivalQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     transportArrivalReconciliation = startTransportArrivalReconciliation(
-      () => reconcilePendingTransportArrivalJobs(prisma, transportArrivalQueue),
+      observeReconciliation('transport-arrival', () => reconcilePendingTransportArrivalJobs(prisma, transportArrivalQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[transport-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[transport-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'transport-arrival' }));
 
 void Promise.all([espionageProbeArrivalWorker.waitUntilReady(), espionageProbeArrivalQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     espionageProbeArrivalReconciliation = startEspionageProbeArrivalReconciliation(
-      () => reconcilePendingEspionageProbeArrivalJobs(prisma, espionageProbeArrivalQueue),
+      observeReconciliation('espionage-probe-arrival', () => reconcilePendingEspionageProbeArrivalJobs(prisma, espionageProbeArrivalQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[espionage-probe-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[espionage-probe-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'espionage-probe-arrival' }));
 
 void Promise.all([corvetteStrikeArrivalWorker.waitUntilReady(), corvetteStrikeArrivalQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     corvetteStrikeArrivalReconciliation = startCorvetteStrikeArrivalReconciliation(
-      () => reconcilePendingCorvetteStrikeArrivalJobs(prisma, corvetteStrikeArrivalQueue),
+      observeReconciliation('corvette-strike-arrival', () => reconcilePendingCorvetteStrikeArrivalJobs(prisma, corvetteStrikeArrivalQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[corvette-strike-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[corvette-strike-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'corvette-strike-arrival' }));
 
 void Promise.all([frigateStrikeArrivalWorker.waitUntilReady(), frigateStrikeArrivalQueue.waitUntilReady()])
   .then(() => {
     if (shuttingDown) return;
     frigateStrikeArrivalReconciliation = startFrigateStrikeArrivalReconciliation(
-      () => reconcilePendingFrigateStrikeArrivalJobs(prisma, frigateStrikeArrivalQueue),
+      observeReconciliation('frigate-strike-arrival', () => reconcilePendingFrigateStrikeArrivalJobs(prisma, frigateStrikeArrivalQueue)),
       undefined,
-      (error) => {
-        // eslint-disable-next-line no-console
-        console.error('[frigate-strike-arrival-queue] reconciliation failed:', error instanceof Error ? error.message : 'unknown error');
-      },
+      () => undefined,
     );
   })
-  .catch((error: unknown) => {
-    // eslint-disable-next-line no-console
-    console.error('[frigate-strike-arrival-queue] reconciliation startup failed:', error instanceof Error ? error.message : 'unknown error');
-  });
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'frigate-strike-arrival' }));
 
 const healthServer = http.createServer(createHealthHandler({
   database: async () => {

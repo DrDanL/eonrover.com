@@ -79,6 +79,18 @@ describe('parseWorkerConfig', () => {
     ).toThrow(/REDIS_URL/);
   });
 
+  it('rejects known placeholder production credentials without echoing them', () => {
+    for (const override of [
+      { DATABASE_URL: 'postgresql://service:changeme@db.example.com:5432/eonrover' },
+      { REDIS_URL: 'rediss://cache:password@cache.example.com:6380' },
+    ]) {
+      let refusal: unknown;
+      try { parseWorkerConfig(productionEnvironment(override)); } catch (error) { refusal = error; }
+      expect(refusal).toBeInstanceOf(WorkerConfigError);
+      expect((refusal as Error).message).not.toMatch(/changeme|password|db\.example|cache\.example/i);
+    }
+  });
+
   it('does not include secrets or complete URLs in errors', () => {
     const secretUrl = 'redis://secret_user:do-not-print@localhost:6379';
     let refusal: unknown;

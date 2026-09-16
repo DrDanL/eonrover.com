@@ -23,6 +23,7 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - Stage 17 activates Planetary Shield as the third canonical Shipyard defence with its unchanged Shipyard level 6 and completed Shield Technology level 4 prerequisites. The marker constraint now permits only null, `flakTurret`, `railBattery`, or `planetaryShield`, so legacy rows remain inert. New Frigate launch rows persist `frigate-strike-v2`; its seeded resolution uses one combined Frigate salvo against one selected Planetary Shield per attacker phase, while `frigate-strike-v1` rows resolve under their accepted historical policy.
 - Stage 14B introduces a persisted `corvette-strike-v2` policy for new canonical strikes while accepted v1 rows retain their fixed-six-round resolution. V2 deterministically continues from its persisted seed until elimination, a verified no-damage stalemate, or the documented 512-round `unresolved` safety result; immutable player reports never expose a seed or resolver version. The equal-tech 0/3/6 matrix confirms decisive Flak and Rail outcomes while Planetary Shield remains a no-damage stalemate. No combat values were changed.
 - Stage 19 centralises destructive canonical-strike eligibility in `apps/api/src/services/combatTargetEligibility.ts`. Corvette and Frigate command estimates and locked launches use only PostgreSQL account, planet, public-visibility, same-galaxy, and existing protection state; Fleet receives stable safe reasons while Galaxy exposes no protection field or reason. Accepted canonical strike snapshots remain settleable after subsequent defender protection changes.
+- Stage 20A keeps existing local/test defaults but rejects known placeholder production credentials at the API and worker configuration boundaries. API and worker liveness is dependency-free; readiness makes bounded PostgreSQL/Redis checks but returns only `ok` or `unavailable`. `apps/worker/src/operationalEvents.ts` emits safe structured startup, queue, and reconciliation events, and `docs/operations-runbook.md` contains the host-agnostic operational sequence.
 - Stage 8B1 prepares only persistence and pure validation for a future owned-planet DEPLOY lifecycle; no Fleet route, worker, or player control is enabled.
 - Stage 8B2a deliberately disables unsafe legacy Fleet API routes and worker job consumption; queued legacy jobs and database rows are preserved pending the trusted deploy lifecycle.
 - Stage 8B2b adds an internal-only, serializable owned-planet DEPLOY launch transaction. PostgreSQL synchronises and reserves only the origin's ships and Heliox before it stores canonical server-derived snapshots; no public API or player control is enabled.
@@ -471,7 +472,7 @@ Processor-specific hazards:
 - Shipyard commits the unit increment before scheduling/updating the next unit. A failure in between causes a retry to add the same unit again.
 - Legacy fleet arrival/return code retains its original unsafe behavior but is deliberately dormant: no worker registers a `fleet-queue` consumer. The separate `deploy-arrival-queue` accepts only canonical owned-planet DEPLOY wake-ups.
 - Admin job deletion removes only Redis state (`admin.ts:170`), with no queue-record transition or refund.
-- Worker `/healthz` is liveness-only; `/readyz` independently checks PostgreSQL and Redis and is used by Compose.
+- Worker `/healthz` is dependency-free liveness; `/readyz` performs bounded PostgreSQL and Redis checks but returns only `ok` or `unavailable`, so dependency topology is not exposed to callers.
 
 ## Docker services, persistence, and local development
 
@@ -499,9 +500,9 @@ No secret values were read. The documented names and behavior are:
 | Variable | Consumer | Notes |
 | --- | --- | --- |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Compose | Used to configure PostgreSQL and assemble container `DATABASE_URL`; weak development fallbacks are supplied. |
-| `DATABASE_URL` | Prisma API/worker runtime | Required outside Compose. Tests use only a separately validated `TEST_DATABASE_URL`; Compose assembles its internal URL from `POSTGRES_*`. |
+| `DATABASE_URL` | Prisma API/worker runtime | Required outside Compose. Tests use only a separately validated `TEST_DATABASE_URL`; Compose assembles its internal URL from `POSTGRES_*`. Production rejects local endpoints and known placeholder credentials without echoing them. |
 | `TEST_DATABASE_URL`, `ALLOW_TEST_DATABASE_RESET` | API/worker tests | Both are required for destructive integration cleanup, and the decoded database name must end in `_test`. Runtime `DATABASE_URL` is never a fallback. |
-| `REDIS_URL` | API/worker source | Defaults to local Redis in development/test; Compose passes through an override or uses `redis://redis:6379`. |
+| `REDIS_URL` | API/worker source | Defaults to local Redis in development/test; Compose passes through an override or uses `redis://redis:6379`. Production requires a non-local URL and rejects a known placeholder password when one is configured. |
 | `PORT` | API | Defaults 4000; Compose mapping and readiness probe follow it. |
 | `BIND_ADDRESS`, `*_HOST_PORT` | Local Compose/launcher | Loopback-only host bindings; the launcher selects bounded fallbacks without changing container-side service ports. |
 | `NODE_ENV` | API/container | Controls Prisma singleton and cookie default; local Compose and the launcher use development mode. |
@@ -554,7 +555,7 @@ The root `npm test` runs 295 unit/integration tests. API/worker integration suit
 1. The local Compose stack intentionally host-publishes development PostgreSQL/Redis/Mailpit; it is not a production deployment template.
 2. Password-reset tokens remain plaintext at rest, expired auth rows have no maintenance cleanup, rate limiting is process-local, and proxy/IP behavior is not defined for deployment.
 3. Research/shipyard jobs still trust fields from reachable Redis, and admin removal of non-building jobs can strand PostgreSQL workflow state.
-4. Audit retention is not durable, backup/restore has not been rehearsed, and production CI/CD, TLS, monitoring, rollback and incident runbooks are absent.
+4. Audit retention is not durable and backup/restore has not been rehearsed. A host-agnostic deployment, readiness, and wake-up recovery runbook now exists, but production CI/CD, TLS, monitoring, rollback automation, and incident rehearsal remain absent.
 
 ### Remaining UI, type, and tooling concerns
 

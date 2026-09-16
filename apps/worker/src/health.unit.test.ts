@@ -25,7 +25,7 @@ describe('worker operational probes', () => {
 
     await expect(healthResponse('GET', '/readyz', checks)).resolves.toEqual({
       statusCode: 200,
-      body: { status: 'ready', checks: { database: 'ok', redis: 'ok' } },
+      body: { status: 'ok' },
     });
     expect(checks.database).toHaveBeenCalledTimes(1);
     expect(checks.redis).toHaveBeenCalledTimes(1);
@@ -42,7 +42,7 @@ describe('worker operational probes', () => {
 
     expect(response).toEqual({
       statusCode: 503,
-      body: { status: 'not_ready', checks: { database: 'unavailable', redis: 'ok' } },
+      body: { status: 'unavailable' },
     });
     expect(checks.database).toHaveBeenCalledTimes(1);
     expect(checks.redis).toHaveBeenCalledTimes(1);
@@ -61,7 +61,7 @@ describe('worker operational probes', () => {
 
     expect(response).toEqual({
       statusCode: 503,
-      body: { status: 'not_ready', checks: { database: 'ok', redis: 'unavailable' } },
+      body: { status: 'unavailable' },
     });
     expect(JSON.stringify(response.body)).not.toContain('private-cache');
     expect(JSON.stringify(response.body)).not.toContain('6379');
@@ -75,7 +75,7 @@ describe('worker operational probes', () => {
 
     await expect(healthResponse('GET', '/readyz', checks, 10)).resolves.toEqual({
       statusCode: 503,
-      body: { status: 'not_ready', checks: { database: 'unavailable', redis: 'ok' } },
+      body: { status: 'unavailable' },
     });
     expect(checks.redis).toHaveBeenCalledTimes(1);
   });

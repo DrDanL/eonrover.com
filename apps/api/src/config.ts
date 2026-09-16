@@ -27,6 +27,9 @@ export class ApiConfigError extends Error {
 const SUPPORTED_ENVIRONMENTS = new Set<EnvironmentMode>(['development', 'test', 'production']);
 const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
 const REDIS_PROTOCOLS = new Set(['redis:', 'rediss:']);
+const KNOWN_INSECURE_PRODUCTION_SECRETS = new Set([
+  'password', 'changeme', 'change-me', 'secret', 'replace-me', 'your-password', 'example',
+]);
 
 function invalid(variable: string, reason: string): never {
   throw new ApiConfigError(variable, reason);
@@ -98,6 +101,20 @@ function decodeDatabasePassword(parsed: URL): string {
     return decodeURIComponent(parsed.password);
   } catch {
     invalid('DATABASE_URL', 'must contain valid credential encoding');
+  }
+}
+
+function decodeRedisPassword(parsed: URL): string {
+  try {
+    return decodeURIComponent(parsed.password);
+  } catch {
+    invalid('REDIS_URL', 'must contain valid credential encoding');
+  }
+}
+
+function assertNotKnownInsecureSecret(variable: string, value: string): void {
+  if (KNOWN_INSECURE_PRODUCTION_SECRETS.has(value.trim().toLowerCase())) {
+    invalid(variable, 'must not use a known placeholder credential in production');
   }
 }
 
@@ -187,6 +204,7 @@ export function parseApiConfig(environment: Environment): Readonly<ApiConfig> {
 
   if (production) {
     const databasePassword = decodeDatabasePassword(parsedDatabase);
+    assertNotKnownInsecureSecret('DATABASE_URL', databasePassword);
     if (
       isLoopback(parsedDatabase.hostname) ||
       normalizedHostname(parsedDatabase.hostname) === 'postgres' ||
@@ -197,6 +215,7 @@ export function parseApiConfig(environment: Environment): Readonly<ApiConfig> {
     if (isLoopback(parsedRedis.hostname) || normalizedHostname(parsedRedis.hostname) === 'redis') {
       invalid('REDIS_URL', 'must not use a local-development endpoint in production');
     }
+    if (parsedRedis.password) assertNotKnownInsecureSecret('REDIS_URL', decodeRedisPassword(parsedRedis));
     if (parsedWebUrl.protocol !== 'https:' || isLoopback(parsedWebUrl.hostname)) {
       invalid('WEB_URL', 'must be a non-loopback HTTPS origin in production');
     }
