@@ -8,7 +8,7 @@
 
 ## Safe deployment sequence
 
-1. Confirm that a current backup exists; this runbook does not claim a restore rehearsal.
+1. Confirm that a current backup exists. A Stage 20B disposable physical PostgreSQL backup/restore and canonical Frigate wake-up recovery rehearsal has passed; this is not a claim about a production backup or restore.
 2. Inspect migration status and apply the reviewed migrations.
 3. Restart the API and worker.
 4. Check API and worker readiness.
@@ -22,4 +22,4 @@
 
 ## Logging and support boundaries
 
-Operational events carry only event names, queue/reconciliation labels, and safe aggregate counts. Do not put database or Redis URLs, passwords, tokens, cookies, session IDs, email credentials, player resources, manifests, combat seeds, reports, or target details in logs or support tickets.
+Operational events carry only static event names, a static operation family, a safe status, and bounded aggregate counts. They do not include BullMQ queue names, job or database identifiers, payloads, raw errors, connection details, or player data. Do not put database or Redis URLs, passwords, tokens, cookies, session IDs, email credentials, player resources, manifests, combat seeds, reports, or target details in logs or support tickets.

@@ -1,6 +1,6 @@
 import http from 'http';
 import { getWorkerConfig } from './config';
-import { emitOperationalEvent, reconciliationCounts } from './operationalEvents';
+import { emitOperationalEvent, reconciliationCounts, type WorkerOperationFamily } from './operationalEvents';
 
 let config: ReturnType<typeof getWorkerConfig>;
 try {
@@ -61,23 +61,23 @@ const {
 } = require('./frigateStrikeArrivalReconciler') as typeof import('./frigateStrikeArrivalReconciler');
 const connection = createRedisConnection();
 
-function logCompletion(queue: string) {
-  return () => emitOperationalEvent({ event: 'worker.job_completed', queue });
+function logCompletion(component: WorkerOperationFamily) {
+  return () => emitOperationalEvent({ event: 'worker.job_completed', component });
 }
 
-function logFailure(queue: string) {
-  return () => emitOperationalEvent({ event: 'worker.job_failed', queue });
+function logFailure(component: WorkerOperationFamily) {
+  return () => emitOperationalEvent({ event: 'worker.job_failed', component });
 }
 
-function observeReconciliation(name: string, reconcile: () => Promise<unknown>): () => Promise<unknown> {
+function observeReconciliation(component: WorkerOperationFamily, reconcile: () => Promise<unknown>): () => Promise<unknown> {
   return async () => {
-    emitOperationalEvent({ event: 'worker.reconciliation_started', reconciliation: name });
+    emitOperationalEvent({ event: 'worker.reconciliation_started', component });
     try {
       const result = await reconcile();
-      emitOperationalEvent({ event: 'worker.reconciliation_completed', reconciliation: name, counts: reconciliationCounts(result) });
+      emitOperationalEvent({ event: 'worker.reconciliation_completed', component, counts: reconciliationCounts(result) });
       return result;
     } catch (error) {
-      emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: name });
+      emitOperationalEvent({ event: 'worker.reconciliation_failed', component });
       throw error;
     }
   };
@@ -105,20 +105,24 @@ const corvetteStrikeArrivalWorker = new Worker('corvette-strike-arrival-queue', 
 // A separate Frigate-only queue preserves all historical Corvette and legacy Fleet lifecycles.
 const frigateStrikeArrivalWorker = new Worker('frigate-strike-arrival-queue', processFrigateStrikeArrivalJob, { connection });
 
-for (const [name, worker] of [
-  ['build-queue', buildWorker],
-  ['research-queue', researchWorker],
-  ['shipyard-queue', shipyardWorker],
-  ['deploy-arrival-queue', deployArrivalWorker],
-  ['colonization-arrival-queue', colonizationArrivalWorker],
-  ['transport-arrival-queue', transportArrivalWorker],
-  ['espionage-probe-arrival-queue', espionageProbeArrivalWorker],
-  ['corvette-strike-arrival-queue', corvetteStrikeArrivalWorker],
-  ['frigate-strike-arrival-queue', frigateStrikeArrivalWorker],
+let registeredQueueCount = 0;
+for (const [worker, component] of [
+  [buildWorker, 'build'],
+  [researchWorker, 'research'],
+  [shipyardWorker, 'shipyard'],
+  [deployArrivalWorker, 'deploy-arrival'],
+  [colonizationArrivalWorker, 'colonization-arrival'],
+  [transportArrivalWorker, 'transport-arrival'],
+  [espionageProbeArrivalWorker, 'espionage-probe-arrival'],
+  [corvetteStrikeArrivalWorker, 'corvette-strike-arrival'],
+  [frigateStrikeArrivalWorker, 'frigate-strike-arrival'],
 ] as const) {
-  worker.on('completed', logCompletion(name));
-  worker.on('failed', logFailure(name));
-  worker.on('ready', () => emitOperationalEvent({ event: 'worker.queue_registered', queue: name }));
+  worker.on('completed', logCompletion(component));
+  worker.on('failed', logFailure(component));
+  worker.on('ready', () => {
+    registeredQueueCount += 1;
+    emitOperationalEvent({ event: 'worker.queue_registered', count: registeredQueueCount });
+  });
 }
 
 emitOperationalEvent({ event: 'worker.started' });
@@ -142,7 +146,7 @@ void Promise.all([buildWorker.waitUntilReady(), buildReconciliationQueue.waitUnt
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'build' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'build' }));
 
 void Promise.all([shipyardWorker.waitUntilReady(), shipyardReconciliationQueue.waitUntilReady()])
   .then(() => {
@@ -153,7 +157,7 @@ void Promise.all([shipyardWorker.waitUntilReady(), shipyardReconciliationQueue.w
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'shipyard' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'shipyard' }));
 
 void Promise.all([researchWorker.waitUntilReady(), researchReconciliationQueue.waitUntilReady()])
   .then(() => {
@@ -164,7 +168,7 @@ void Promise.all([researchWorker.waitUntilReady(), researchReconciliationQueue.w
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'research' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'research' }));
 
 void Promise.all([deployArrivalWorker.waitUntilReady(), deployArrivalQueue.waitUntilReady()])
   .then(() => {
@@ -175,7 +179,7 @@ void Promise.all([deployArrivalWorker.waitUntilReady(), deployArrivalQueue.waitU
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'deploy-arrival' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'deploy-arrival' }));
 
 void Promise.all([colonizationArrivalWorker.waitUntilReady(), colonizationArrivalQueue.waitUntilReady()])
   .then(() => {
@@ -186,7 +190,7 @@ void Promise.all([colonizationArrivalWorker.waitUntilReady(), colonizationArriva
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'colonization-arrival' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'colonization-arrival' }));
 
 void Promise.all([transportArrivalWorker.waitUntilReady(), transportArrivalQueue.waitUntilReady()])
   .then(() => {
@@ -197,7 +201,7 @@ void Promise.all([transportArrivalWorker.waitUntilReady(), transportArrivalQueue
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'transport-arrival' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'transport-arrival' }));
 
 void Promise.all([espionageProbeArrivalWorker.waitUntilReady(), espionageProbeArrivalQueue.waitUntilReady()])
   .then(() => {
@@ -208,7 +212,7 @@ void Promise.all([espionageProbeArrivalWorker.waitUntilReady(), espionageProbeAr
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'espionage-probe-arrival' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'espionage-probe-arrival' }));
 
 void Promise.all([corvetteStrikeArrivalWorker.waitUntilReady(), corvetteStrikeArrivalQueue.waitUntilReady()])
   .then(() => {
@@ -219,7 +223,7 @@ void Promise.all([corvetteStrikeArrivalWorker.waitUntilReady(), corvetteStrikeAr
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'corvette-strike-arrival' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'corvette-strike-arrival' }));
 
 void Promise.all([frigateStrikeArrivalWorker.waitUntilReady(), frigateStrikeArrivalQueue.waitUntilReady()])
   .then(() => {
@@ -230,7 +234,7 @@ void Promise.all([frigateStrikeArrivalWorker.waitUntilReady(), frigateStrikeArri
       () => undefined,
     );
   })
-  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', reconciliation: 'frigate-strike-arrival' }));
+  .catch(() => emitOperationalEvent({ event: 'worker.reconciliation_failed', component: 'frigate-strike-arrival' }));
 
 const healthServer = http.createServer(createHealthHandler({
   database: async () => {
