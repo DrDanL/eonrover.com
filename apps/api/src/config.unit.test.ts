@@ -23,6 +23,7 @@ describe('parseApiConfig', () => {
 
     expect(config).toEqual({
       environment: 'development',
+      adminPortalEnabled: true,
       databaseUrl: DEVELOPMENT_DATABASE_URL,
       redisUrl: 'redis://localhost:6379',
       port: 4000,
@@ -49,6 +50,7 @@ describe('parseApiConfig', () => {
     });
 
     expect(config.environment).toBe('test');
+    expect(config.adminPortalEnabled).toBe(true);
     expect(config.databaseUrl).toBe(testDatabaseUrl);
     expect(config.redisUrl).toBe('redis://localhost:6379/15');
   });
@@ -57,6 +59,7 @@ describe('parseApiConfig', () => {
     const config = parseApiConfig(productionEnvironment());
 
     expect(config.environment).toBe('production');
+    expect(config.adminPortalEnabled).toBe(false);
     expect(config.webUrl).toBe('https://play.example.com');
     expect(config.secureCookies).toBe(true);
     expect(config.smtp).toEqual({
@@ -65,6 +68,13 @@ describe('parseApiConfig', () => {
       from: 'no-reply@example.com',
       requireTls: true,
     });
+  });
+
+  it('requires explicit production opt-in for the local administrator portal', () => {
+    expect(parseApiConfig(productionEnvironment({ ADMIN_PORTAL_ENABLED: 'true' })).adminPortalEnabled).toBe(true);
+    expect(() => parseApiConfig(productionEnvironment({ ADMIN_PORTAL_ENABLED: 'yes' }))).toThrow(
+      /ADMIN_PORTAL_ENABLED must equal true or false/,
+    );
   });
 
   it('rejects a missing required production variable', () => {

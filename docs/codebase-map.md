@@ -48,11 +48,11 @@ This document was refreshed for the Stage 6C research completion/recovery work o
 - The disposable stack uses a generated `eonrover-e2e-*` project, random loopback ports, project-scoped volumes, fixed disposable database credentials, output redaction, and scoped cleanup.
 - ESLint 9 configuration failures remain a known issue outside this milestone; lint configuration was not repaired.
 
-The trusted registration-to-admin-inspection slice is verified against live PostgreSQL, Redis, Mailpit, API, worker, and web containers. Broader prototype systems remain outside that end-to-end guarantee.
+The trusted registration slice is verified against live PostgreSQL, Redis, Mailpit, API, worker, and web containers. The former broad administrator inspection surface is retired; broader prototype systems remain outside that end-to-end guarantee.
 
 ## Current application in one paragraph
 
-Eon Rover is a compact TypeScript npm-workspaces monorepo containing a Next.js browser client, an Express REST API, a PostgreSQL schema accessed through Prisma, a Redis/BullMQ timed-job layer, and a separate BullMQ worker. Its trusted vertical slice now provides atomic account/homeworld provisioning, recoverable email verification, digest-backed database sessions, row-locked timestamp production, hard server-authoritative prerequisite, field-capacity and energy gating, atomic single-item building start/cancellation, PostgreSQL-authoritative idempotent completion with Redis reconciliation, a coherent authenticated command shell and planet overview, restart verification, and an audited read-only administrator player-state view. Research, shipyard, fleet, social, deployment, and other advanced systems remain a broad prototype rather than production-ready gameplay.
+Eon Rover is a compact TypeScript npm-workspaces monorepo containing a Next.js browser client, an Express REST API, a PostgreSQL schema accessed through Prisma, a Redis/BullMQ timed-job layer, and a separate BullMQ worker. Its trusted vertical slice now provides atomic account/homeworld provisioning, recoverable email verification, digest-backed database sessions, row-locked timestamp production, hard server-authoritative prerequisite, field-capacity and energy gating, atomic single-item building start/cancellation, PostgreSQL-authoritative idempotent completion with Redis reconciliation, and a coherent authenticated command shell and planet overview. The local administrator portal is now an ADMIN-only read-only status shell; its former player-state and operational inspection is deliberately unavailable. Research, shipyard, fleet, social, deployment, and other advanced systems remain a broad prototype rather than production-ready gameplay.
 
 ## Area-by-area assessment
 
@@ -81,12 +81,12 @@ The classifications below use the requested vocabulary. “Implemented and conne
 | Messaging and notifications | Partially implemented | Compose/inbox/sent/read and notification list/read-all are connected. There is no player deletion/report/blocking flow, pagination, per-user anti-spam control, or complete event coverage. |
 | Leaderboards | Implemented and connected | Public and protected boards compute a live score from planet count and building levels. The scoring model is minimal and recalculates by loading all active users and their planets/buildings. |
 | New-player protection | Placeholder | Registration uses the current configured duration for `protectedUntil`, which is displayed in the galaxy browser, but `POST /api/fleet` still does not enforce protection against attacks or raids. |
-| Administration and moderation | Partially implemented | Admin-only bounded player search and explicit read-only account/planet state inspection are connected, sensitive fields are allowlisted out, authoritative state is settled on read, and each detail open is audited. Earlier status/rename/job-management features and their broader semantics remain prototype scope. |
+| Administration and moderation | Intentionally unavailable | The retained `/admin` shell and `/api/admin/status` are ADMIN-only and local/test by default; production requires `ADMIN_PORTAL_ENABLED=true`. All player-state, account, configuration, announcement, queue, audit, security, and health management routes are retired with a safe unavailable response. |
 | Game configuration and balancing | Partially implemented | Six values are editable and stored. Economy, research, and fleet speeds are used, and registration now uses configured protection hours; `universeSpeed` and `maxPlanetsPerPlayer` remain unused. |
-| Administrative audit records | Partially implemented | Player-state detail opens and selected admin mutations call `logAudit`; safe inspection records contain no credential/token metadata. Coverage, failed-delete semantics, retention, and tamper evidence remain incomplete. |
+| Administrative audit records | Persisted but unavailable | Historical audit records remain in the database, but no administrator browser route reads or writes them. Retention and future safe projections remain separate work. |
 | Background jobs and timed events | Partially implemented | Building completion now treats PostgreSQL as authoritative, uses deterministic BullMQ wake-ups, reconciles missing/stale jobs on startup and every 30 seconds, and claims the transition idempotently. Research, shipyard, and fleet timers retain the earlier recovery/idempotency limitations. |
 | Graphics and visual assets | Partially implemented | Visuals remain primarily CSS, the generated starfield, navigation emoji and `favicon.ico`; building cards use original inline SVG schematics and the overview adds an original CSS planet/orbit treatment. There is still no broader ship, map, audio, or production-art inventory. |
-| Automated testing | Implemented for the trusted slice | Guard/unit tests and isolated PostgreSQL integration suites cover configuration, failure boundaries, auth/provisioning, production/building concurrency, completion/reconciliation, and admin RBAC/allowlists. An opt-in disposable full-stack harness proves the complete slice and restart persistence; broader UI/gameplay coverage remains incomplete. |
+| Automated testing | Implemented for the trusted slice | Guard/unit tests and isolated PostgreSQL integration suites cover configuration, failure boundaries, auth/provisioning, production/building concurrency, completion/reconciliation, and the contained administrator RBAC/runtime-policy/unavailable-route boundary. An opt-in disposable full-stack harness proves the complete slice and restart persistence; broader UI/gameplay coverage remains incomplete. |
 | Security, validation and rate limiting | Partially implemented | bcrypt, random digest-backed sessions, hashed email-verification tokens, active-account checks on every protected request, HttpOnly/SameSite cookies, Helmet, CORS, Zod, CSRF header, normalized errors, and rate limits protect the slice. Password-reset token storage, proxy/IP policy, host-published local infrastructure, and broader abuse controls still need work. |
 | Accessibility and responsive behaviour | Partially implemented | Semantic headings/landmarks, focus-visible styles, `lang="en"`, a purpose-built mobile command menu, labelled resource/energy summaries and progress semantics, keyboard planet/category controls, descriptive graphics, live construction countdowns, and reduced-motion handling exist. Broader automated audits, mobile table treatment and a complete screen-reader pass remain future work. |
 | Deployment and operational documentation | Partially implemented | Dockerfiles, local Compose, `.env.example`, separate liveness/readiness endpoints, migration-on-start, backup notes, a safe worker-event projection, and a disposable physical PostgreSQL backup/restore plus Frigate Redis-loss recovery rehearsal exist. Compose honors documented connection/health settings and supports loopback/random-port isolation, but exposed local-service defaults, unpinned images, CI/CD, TLS, monitoring, production rehearsal, and rollback automation remain future work. |
@@ -125,7 +125,7 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │   │       ├── lib               auth, mail, Prisma, Redis/BullMQ clients
 │   │       ├── middleware        session/RBAC/CSRF checks
 │   │       ├── routes            auth, game, social, public, and admin REST routes
-│   │       ├── services          config, provisioning, production, completion, internal deploy launch, admin state
+│   │       ├── services          config, provisioning, production, completion, and internal mission launch services
 │   │       ├── *.test.ts         route integration tests
 │   │       └── testSetup.ts      guarded cleanup for isolated DB-backed tests
 │   ├── worker
@@ -151,7 +151,7 @@ Generated build output is tracked only for `packages/shared/dist`; other build p
 │           ├── app
 │           │   ├── (public)      marketing, legal, auth, news/stats/leaderboard
 │           │   ├── (game)/game   protected player pages
-│           │   ├── (admin)/admin role-gated administrator pages
+│           │   ├── (admin)/admin ADMIN-only local read-only status shell
 │           │   ├── page.tsx      root landing page (outside the public route group)
 │           │   ├── layout.tsx, globals.css
 │           │   └── favicon.ico
@@ -202,10 +202,10 @@ Browser
 ```
 
 - There are no Next.js route handlers, server actions, middleware guards, WebSockets, or server-rendered API calls. Dynamic pages use browser-side fetches through `apps/web/src/lib/api.ts:17`.
-- `AuthProvider` calls `GET /api/auth/me` after hydration (`apps/web/src/lib/AuthContext.tsx:29`). Player/admin layouts are client-side display guards; API middleware is the actual authorization boundary.
+- `AuthProvider` calls `GET /api/auth/me` after hydration (`apps/web/src/lib/AuthContext.tsx:29`). Player layouts are client-side display guards; the admin route group also has a server-rendered runtime-policy guard, while API middleware remains the authorization boundary.
 - The shared package is used by API and worker for constants and formulas. The web app duplicates transport-facing types in `apps/web/src/lib/web-types.ts` and does not import shared game types.
 - PostgreSQL stores authoritative game and workflow state. Redis stores delayed BullMQ wake-ups; the building worker reconciles every pending PostgreSQL construction into a deterministic live job on startup and every 30 seconds.
-- Resource production is not a recurring job. It advances under a PostgreSQL planet-row lock on owned/admin planet reads, before building spends/cancellation, and at exact building-completion boundaries.
+- Resource production is not a recurring job. It advances under a PostgreSQL planet-row lock on owned planet reads, before building spends/cancellation, and at exact building-completion boundaries.
 
 ## Frontend routes
 
@@ -250,23 +250,18 @@ All are beneath the client-guarded layout in `apps/web/src/app/(game)/game/layou
 | `/game/reports` | Combat and espionage records rendered mainly as raw JSON. |
 | `/game/settings` | Account summary, logout, reset-password link; explicitly notes unavailable session management. |
 
-The shell normally links Overview, Buildings, Galaxy, Messages, Alliance, Eon Gates, Reports, Leaderboard, Notifications, Settings, and permitted administrator access. Research, Shipyard, and Fleet remain directly routable prototype pages but are labelled `Coming later` rather than promoted as trusted gameplay because their queue/effect/recovery rules remain incomplete.
+The shell normally links Overview, Buildings, Galaxy, Messages, Alliance, Eon Gates, Reports, Leaderboard, Notifications, Settings, and an Administrator link for `ADMIN` users only. Research, Shipyard, and Fleet remain directly routable prototype pages but are labelled `Coming later` rather than promoted as trusted gameplay because their queue/effect/recovery rules remain incomplete.
 
 ### Administrator routes
 
-All are beneath `apps/web/src/app/(admin)/admin/layout.tsx:8`, which permits `MODERATOR` and `ADMIN`; individual API routes impose stricter admin-only checks where present.
+All are beneath `apps/web/src/app/(admin)/admin/layout.tsx`, which server-renders a local/test-or-explicit-opt-in guard before the client `ADMIN` role display boundary. The API repeats the current database-backed `ADMIN` and runtime checks for every `/api/admin` request.
 
 | Route | Purpose and connection |
 | --- | --- |
-| `/admin` | Live counts, four queue summaries, PostgreSQL/Redis checks. |
-| `/admin/users` | Admin-only bounded search and explicit read-only account/planet-state inspection. |
-| `/admin/announcements` | List, create, delete. Both moderators and admins can mutate. |
-| `/admin/config` | View all values; admin-only edits. |
-| `/admin/jobs` | View delayed/failed jobs; admin-only removal. |
-| `/admin/security` | Last 100 security events. |
-| `/admin/audit` | Last 200 selected admin actions. |
+| `/admin` | ADMIN-only read-only portal-status shell; no operational or player data. |
+| `/admin/users`, `/admin/announcements`, `/admin/config`, `/admin/jobs`, `/admin/security`, `/admin/audit` | Retired screen routes showing only a concise unavailable state. |
 
-There is no UI for the existing message-delete or alliance-delete endpoints. Earlier account status/rename API mutations remain available but are deliberately absent from the read-only player-state page.
+No administrator mutation, raw queue, audit, security, configuration, or player-state UI remains available.
 
 ## REST API inventory
 
@@ -333,23 +328,8 @@ All mutating requests pass the global custom-header check in `requireCsrfHeader`
 | `GET /api/public/stats` | Public | Connected. |
 | `GET /api/public/leaderboard-preview` | Public | Connected; top 10. |
 | `GET /api/public/announcements` | Public | Connected; latest 20. |
-| `GET /api/admin/dashboard` | Moderator/admin | Connected; DB counts and queue counts. |
-| `GET /api/admin/users` | Admin | Connected to the read-only player-state page; trimmed username/email/exact-ID search with bounded deterministic pagination and an explicit result allowlist. |
-| `GET /api/admin/users/:id` | Admin | Connected; returns an explicit account/planet state DTO, settles authoritative planet state, and records one `PLAYER_STATE_VIEWED` audit event. |
-| `POST /api/admin/users/:id/status` | Admin | Connected; status and session revocation for non-active states. |
-| `POST /api/admin/users/:id/rename` | Admin | Connected. |
-| `GET /api/admin/config` | Moderator/admin | Connected. |
-| `POST /api/admin/config` | Admin | Connected; positive numbers only. |
-| `GET /api/admin/announcements` | Moderator/admin | Connected. |
-| `POST /api/admin/announcements` | Moderator/admin | Connected. |
-| `DELETE /api/admin/announcements/:id` | Moderator/admin | Connected; logs deletion even when target did not exist. |
-| `DELETE /api/admin/messages/:id` | Moderator/admin | Implemented API only; not called by web. |
-| `DELETE /api/admin/alliances/:id` | Admin | Implemented API only; not called by web. |
-| `GET /api/admin/jobs` | Moderator/admin | Connected; first 20 failed/delayed per queue, including job payloads. |
-| `DELETE /api/admin/jobs/:queue/:id` | Admin | Connected; removes BullMQ job only and strands the corresponding PostgreSQL state. |
-| `GET /api/admin/security-events` | Moderator/admin | Connected. |
-| `GET /api/admin/audit-log` | Moderator/admin | Connected. |
-| `GET /api/admin/health` | Moderator/admin | Connected; independently probes PostgreSQL and Redis. |
+| `GET /api/admin/status` | Current ADMIN, local/test or explicit opt-in | The only retained endpoint. It returns exactly `{ "status": "read-only" }` and performs no database, Redis, queue, or player-state work. |
+| All former `/api/admin/*` management endpoints | Current ADMIN, local/test or explicit opt-in | Retired. They return `503 ADMIN_PORTAL_UNAVAILABLE` without reading or mutating PostgreSQL, Redis, queues, audit, security, configuration, announcements, or player state. |
 
 Async handlers and centralized terminal error middleware normalize expected Prisma/validation/conflict failures, return safe JSON for unexpected failures, redact sensitive log material, and retain a JSON 404 fallback.
 
@@ -390,7 +370,7 @@ Notable modeling choices to resolve before scale: floating-point resources, free
 2. The verification page posts the raw URL token; only its digest is normally stored. Atomic one-time consumption activates the account. A generic, throttled resend path rotates eligible tokens without revealing account existence, and registration reports delivery failure without rolling back committed state.
 3. Login trims/lowercases email, performs a fixed dummy-hash comparison for unknown accounts, and rejects pending/suspended/banned users with stable codes. `createSession` stores the SHA-256 digest of a random 32-byte token and sets the raw `eonrover_sid` cookie HttpOnly, SameSite=Lax, path `/`, with a 14-day expiry. Secure is enabled only when production and `COOKIE_SECURE` is not `false`.
 4. `requireAuth` resolves digest-backed sessions (and upgrades valid legacy plaintext sessions), checks expiry plus verified/active status on every request, revokes invalidated sessions, and attaches a reduced user. It updates `lastActiveAt` best-effort.
-5. `requireRole` protects admin endpoints. Web layouts improve navigation but do not form the security boundary.
+5. `requireRole('ADMIN')` and the local/test-or-explicit-opt-in runtime guard protect every administrator API endpoint. The web route group repeats the runtime guard but never substitutes for API authorization.
 6. Password reset consumes a one-hour token, changes the hash, and deletes all sessions in one transaction.
 
 Security positives: passwords never leave the auth handler after hashing/verification; auth/admin responses use explicit projections without password hashes, bearer tokens, sessions, or internal job IDs; cookies are HttpOnly; writes require a non-simple custom header; CORS allows one configured web origin; public verification-resend and password-reset responses are enumeration-resistant.
@@ -471,7 +451,7 @@ Processor-specific hazards:
 - Building completion locks planet then construction, conditionally claims `PENDING`, and commits production, level, status, and one notification together. Research retains the earlier non-claiming behavior.
 - Shipyard commits the unit increment before scheduling/updating the next unit. A failure in between causes a retry to add the same unit again.
 - Legacy fleet arrival/return code retains its original unsafe behavior but is deliberately dormant: no worker registers a `fleet-queue` consumer. The separate `deploy-arrival-queue` accepts only canonical owned-planet DEPLOY wake-ups.
-- Admin job deletion removes only Redis state (`admin.ts:170`), with no queue-record transition or refund.
+- The former administrator job-deletion route is retired; no administrator browser endpoint can inspect or mutate queues.
 - Worker `/healthz` is dependency-free liveness; `/readyz` performs bounded PostgreSQL and Redis checks but returns only `ok` or `unavailable`, so dependency topology is not exposed to callers.
 
 ## Docker services, persistence, and local development
@@ -511,6 +491,7 @@ No secret values were read. The documented names and behavior are:
 | `SMTP_HOST`, `SMTP_PORT` | API mailer | Compose passes through overrides or uses Mailpit. Production validation requires a non-local STARTTLS endpoint; no username/password variables exist. |
 | `MAIL_FROM` | API mailer | Sender address. |
 | `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Development admin provisioner | All must be present; idempotently creates one active admin in non-production only without logging identity/credentials. No gameplay records are seeded. |
+| `ADMIN_PORTAL_ENABLED` | API and web administrator boundary | Defaults enabled only in local development/test. Production requires the exact value `true`; its value is never returned or logged. |
 | `WORKER_HEALTH_PORT` | Worker | Defaults 4100; Compose readiness follows it. |
 | `NEXT_PUBLIC_API_URL` | Web build/browser | Build argument is what matters for the client bundle; changing only the running container environment does not rewrite built browser code. |
 
@@ -571,11 +552,11 @@ The root `npm test` runs 295 unit/integration tests. API/worker integration suit
 - Row-locked timestamp resource calculations with energy, storage, fractional precision, and exact building-transition segments.
 - Atomic single-item building start/cancellation plus durable, idempotent, reconciled completion and one notification.
 - Disposable six-service verification of the full player loop, logout/login, full-stack restart, and cleanup.
-- Admin-only bounded player search and audited read-only authoritative account/planet inspection.
+- An ADMIN-only, local/test read-only portal status shell. The earlier player-state and operational inspection surfaces are intentionally unavailable.
 - Queue creation and worker code for research, shipyard, and fleet actions, which remain outside the trusted guarantee.
-- Live planet, galaxy, social, leaderboard, report, gate, notification, public-stat/news, and admin pages backed by API calls.
+- Live planet, galaxy, social, leaderboard, report, gate, notification, and public-stat/news pages backed by API calls; the admin shell deliberately makes no data call.
 - PostgreSQL data volume and Redis/Mailpit volumes in Compose.
-- Role checks on administrator APIs, with stricter admin-only checks for selected mutations.
+- A current database-backed ADMIN role check plus a local/test-or-explicit-opt-in runtime guard on every administrator API route; no administrator mutations remain.
 
 ### What only appears complete or behaves as a prototype
 
@@ -585,7 +566,7 @@ The root `npm test` runs 295 unit/integration tests. API/worker integration suit
 - Fleet mission names exist across the UI, API, and worker, but mission prerequisites/policies and retry safety are incomplete.
 - Espionage “accuracy” does not change revealed information.
 - `isVisible` suggests public gate visibility, but the galaxy response does not expose gates.
-- Restart persistence is verified for the trusted account/homeworld/session/resource/building/admin slice, not for every advanced job processor.
+- Restart persistence is verified for the trusted account/homeworld/session/resource/building slice, not for every advanced job processor.
 - “Production-ready images” and deployment guidance do not account for exposed infrastructure, weak defaults, SMTP limitations, operational recovery, or monitoring.
 - Privacy, terms, support, and game-guide pages are static content, not connected operational/legal systems.
 

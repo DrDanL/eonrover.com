@@ -36,7 +36,7 @@ export default function GameShell({ user, children }: { user: CurrentUser; child
           ? 'near-capacity'
           : 'available'
     : 'available';
-  const showAdminLink = user.role !== 'PLAYER';
+  const showAdminLink = user.role === 'ADMIN';
 
   function switchPlanet(nextPlanetId: string) {
     if (!selectedPlanetId || nextPlanetId === selectedPlanetId) return;

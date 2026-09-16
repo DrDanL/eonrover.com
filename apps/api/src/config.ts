@@ -4,6 +4,8 @@ export type Environment = Readonly<Record<string, string | undefined>>;
 
 export interface ApiConfig {
   readonly environment: EnvironmentMode;
+  /** Local/test by default; production requires an explicit opt-in. */
+  readonly adminPortalEnabled: boolean;
   readonly databaseUrl: string;
   readonly redisUrl: string;
   readonly port: number;
@@ -168,6 +170,7 @@ function validateMailFrom(value: string): string {
 export function parseApiConfig(environment: Environment): Readonly<ApiConfig> {
   const mode = parseEnvironment(environment.NODE_ENV);
   const production = mode === 'production';
+  const adminPortalEnabled = parseBoolean('ADMIN_PORTAL_ENABLED', environment.ADMIN_PORTAL_ENABLED, !production);
 
   const databaseUrl = required(environment, 'DATABASE_URL');
   const parsedDatabase = parseDatabaseUrl(databaseUrl);
@@ -230,6 +233,7 @@ export function parseApiConfig(environment: Environment): Readonly<ApiConfig> {
   const smtp = Object.freeze({ host: smtpHost, port: smtpPort, from: mailFrom, requireTls: production });
   return Object.freeze({
     environment: mode,
+    adminPortalEnabled,
     databaseUrl,
     redisUrl,
     port: parsePort('PORT', environment.PORT, 4000),
