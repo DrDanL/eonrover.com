@@ -35,6 +35,9 @@ async function strikeFixture(options: { corvettes?: number; heliox?: number; pro
 }
 
 function path(originId: string) { return `/api/fleet/strikes?originPlanetId=${originId}`; }
+function commandPath(data: Awaited<ReturnType<typeof strikeFixture>>, corvettes = 2) {
+  return `/api/fleet/strikes/command?originPlanetId=${data.origin.id}&galaxy=${data.target.galaxy}&system=${data.target.system}&slot=${data.target.slot}&corvettes=${corvettes}`;
+}
 function body(data: Awaited<ReturnType<typeof strikeFixture>>) {
   return { originPlanetId: data.origin.id, target: { galaxy: data.target.galaxy, system: data.target.system, slot: data.target.slot }, corvettes: 2 };
 }
@@ -60,6 +63,19 @@ describe('player-safe Corvette strike command API', () => {
       selectedOrigin: { coordinates: { galaxy: data.origin.galaxy, system: data.origin.system, slot: data.origin.slot }, heliox: 9_000, availableCorvettes: 4 },
       activeStrike: null,
     });
+    const command = await request(app).get(commandPath(data)).set('Cookie', data.attacker.cookie).expect(200);
+    expect(command.body).toMatchObject({
+      selectedOrigin: { availableCorvettes: 4, maximumQuantity: 4 },
+      target: { coordinates: { galaxy: data.target.galaxy, system: data.target.system, slot: data.target.slot } },
+      quantity: 2,
+      eligibility: { eligible: true, code: 'ELIGIBLE' },
+      estimate: { durationSeconds: expect.any(Number), fuelHeliox: expect.any(Number) },
+      affordability: { requiredHeliox: expect.any(Number), affordable: true },
+      activeStrike: null,
+    });
+    for (const hidden of [data.target.id, data.attacker.user.id, data.defender.user.id, 'seed', 'resolverVersion', 'jobId', 'queue', 'protectedUntil']) {
+      expect(JSON.stringify(command.body)).not.toContain(hidden);
+    }
     const before = await prisma.planet.findUniqueOrThrow({ where: { id: data.origin.id } });
     const response = await request(app).post('/api/fleet/strikes').set('Cookie', data.attacker.cookie).set('X-Eonrover-Client', '1').send(body(data)).expect(201);
     const mission = await prisma.fleetMission.findFirstOrThrow({ where: { corvetteStrikeOriginPlanetId: data.origin.id } });
@@ -91,12 +107,45 @@ describe('player-safe Corvette strike command API', () => {
     try { await request(app).post('/api/fleet/strikes').set('Cookie', data.attacker.cookie).set('X-Eonrover-Client', '1').send(body(data)).expect(409); } finally { await removeJobs(mission.id); }
   });
 
+  it('uses the same eligibility result for command estimation and the locked launch recheck', async () => {
+    const data = await strikeFixture();
+    const before = {
+      heliox: (await prisma.planet.findUniqueOrThrow({ where: { id: data.origin.id } })).heliox,
+      corvettes: (await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: data.origin.id, key: 'corvette' } } })).count,
+      missions: await prisma.fleetMission.count(), notifications: await prisma.notification.count(),
+    };
+    expect((await request(app).get(commandPath(data)).set('Cookie', data.attacker.cookie).expect(200)).body.eligibility)
+      .toEqual({ eligible: true, code: 'ELIGIBLE' });
+    await prisma.user.update({ where: { id: data.defender.user.id }, data: { protectedUntil: new Date(Date.now() + 60_000) } });
+    expect((await request(app).get(commandPath(data)).set('Cookie', data.attacker.cookie).expect(200)).body.eligibility)
+      .toEqual({ eligible: false, code: 'TARGET_PROTECTED' });
+    await request(app).post('/api/fleet/strikes').set('Cookie', data.attacker.cookie).set('X-Eonrover-Client', '1').send(body(data)).expect(409);
+    const after = {
+      heliox: (await prisma.planet.findUniqueOrThrow({ where: { id: data.origin.id } })).heliox,
+      corvettes: (await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: data.origin.id, key: 'corvette' } } })).count,
+      missions: await prisma.fleetMission.count(), notifications: await prisma.notification.count(),
+    };
+    expect(after).toEqual(before);
+  });
+
+  it('returns only safe eligibility codes for malformed, unavailable, self-owned, and cross-galaxy command targets', async () => {
+    const data = await strikeFixture();
+    await request(app).get(`/api/fleet/strikes/command?originPlanetId=${data.origin.id}&galaxy=1x&system=1&slot=1&corvettes=1`).set('Cookie', data.attacker.cookie).expect(400);
+    const unavailable = await request(app).get(`/api/fleet/strikes/command?originPlanetId=${data.origin.id}&galaxy=1&system=399&slot=12&corvettes=1`).set('Cookie', data.attacker.cookie).expect(200);
+    expect(unavailable.body.eligibility).toEqual({ eligible: false, code: 'TARGET_UNAVAILABLE' });
+    const self = await request(app).get(`/api/fleet/strikes/command?originPlanetId=${data.origin.id}&galaxy=1&system=${data.origin.system}&slot=${data.origin.slot}&corvettes=1`).set('Cookie', data.attacker.cookie).expect(200);
+    expect(self.body.eligibility).toEqual({ eligible: false, code: 'INVALID_TARGET' });
+    const cross = await request(app).get(`/api/fleet/strikes/command?originPlanetId=${data.origin.id}&galaxy=2&system=${data.target.system}&slot=${data.target.slot}&corvettes=1`).set('Cookie', data.attacker.cookie).expect(200);
+    expect(cross.body.eligibility).toEqual({ eligible: false, code: 'INVALID_TARGET' });
+  });
+
   it('settles a due strike once before GET without duplicate report, notifications, or survivor restoration', async () => {
     const data = await strikeFixture();
     await request(app).post('/api/fleet/strikes').set('Cookie', data.attacker.cookie).set('X-Eonrover-Client', '1').send(body(data)).expect(201);
     const mission = await prisma.fleetMission.findFirstOrThrow({ where: { corvetteStrikeOriginPlanetId: data.origin.id } });
     try {
       const due = new Date(Date.now() - 2_000);
+      await prisma.user.update({ where: { id: data.defender.user.id }, data: { protectedUntil: new Date(Date.now() + 60_000) } });
       await prisma.fleetMission.update({ where: { id: mission.id }, data: { departedAt: new Date(due.getTime() - mission.corvetteStrikeOutboundDurationSeconds! * 1_000), arrivesAt: due } });
       const first = await request(app).get(path(data.origin.id)).set('Cookie', data.attacker.cookie).expect(200);
       const second = await request(app).get(path(data.origin.id)).set('Cookie', data.attacker.cookie).expect(200);

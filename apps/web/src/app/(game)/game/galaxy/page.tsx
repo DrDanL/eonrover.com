@@ -56,11 +56,10 @@ export default function GalaxyPage() {
                   <td>{slot.occupancy === 'public' ? slot.planet.name : slot.occupancy === 'empty' ? 'Empty' : 'Unavailable'}</td>
                   <td>{slot.occupancy === 'public' ? slot.owner.username : '—'}</td>
                   <td>{slot.occupancy === 'public' ? enumLabel(slot.planet.type) : '—'}</td>
-                  <td>{slot.occupancy === 'empty' ? 'Open' : slot.occupancy === 'unavailable' ? 'Unavailable' : slot.owner.protected ? 'Protected' : 'Occupied'}</td>
+                  <td>{slot.occupancy === 'empty' ? 'Open' : slot.occupancy === 'unavailable' ? 'Unavailable' : 'Occupied'}</td>
                   <td>{slot.occupancy === 'public' && summary?.selectedPlanetId ? <div className="button-row">
                     <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=espionage&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Send Probe to ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Send Probe</Link>
-                    {slot.owner.protected ? <span className="tag">Strike unavailable: protected</span>
-                      : selectedOriginGalaxy !== galaxy ? <span className="tag">Strike unavailable: same galaxy required</span>
+                    {selectedOriginGalaxy !== galaxy ? <span className="tag">Strike unavailable</span>
                         : <>
                           <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=strike&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Launch Strike at ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Launch Strike</Link>
                           <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=frigate-strike&targetGalaxy=${galaxy}&targetSystem=${system}&targetPosition=${slot.slot}`} aria-label={`Prepare Frigate Strike at ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Prepare Frigate Strike</Link>

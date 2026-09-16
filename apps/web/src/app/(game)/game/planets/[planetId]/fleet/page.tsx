@@ -8,7 +8,7 @@ import StatusPanel from '@/components/StatusPanel';
 import { apiGet, apiPost } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
 import { useGameCommand } from '@/lib/GameCommandContext';
-import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetFrigateStrikeCommandResponse, FleetFrigateStrikesResponse, FleetStrikesResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
+import { FleetColonizationsResponse, FleetDeploymentsResponse, FleetEspionageResponse, FleetFrigateStrikeCommandResponse, FleetFrigateStrikesResponse, FleetStrikeCommandResponse, FleetStrikesResponse, FleetTransportsResponse, ResourceAmounts } from '@/lib/web-types';
 import { getErrorMessage, useApiData, useTicker } from '@/lib/useApiData';
 
 function duration(seconds: number): string {
@@ -64,12 +64,27 @@ function frigateEligibilityMessage(code: FleetFrigateStrikeCommandResponse['elig
   }
 }
 
+function corvetteEligibilityMessage(code: FleetStrikeCommandResponse['eligibility']['code']): string {
+  switch (code) {
+    case 'ELIGIBLE': return 'This command is currently eligible. The server checks the target again when it launches.';
+    case 'INVALID_TARGET': return 'Choose a different same-galaxy coordinate. The target cannot be this origin.';
+    case 'TARGET_UNAVAILABLE': return 'This coordinate is not available for a Corvette strike.';
+    case 'TARGET_PROTECTED': return 'This target is protected and cannot be struck now.';
+    case 'STRIKE_IN_PROGRESS': return 'This origin already has a Corvette strike in progress.';
+    case 'INSUFFICIENT_CORVETTES': return 'This origin does not have the selected number of available Corvettes.';
+    case 'INSUFFICIENT_HELIOX': return 'This origin does not have enough Heliox for the server-calculated round trip.';
+  }
+}
+
 export default function FleetPage() {
   const { summary, loading: commandLoading, refresh: refreshCommand } = useGameCommand();
   const searchParams = useSearchParams();
   const originPlanetId = summary?.selectedPlanetId ?? null;
   const now = useTicker();
   const [mode, setMode] = useState<FleetMode>('deploy');
+  const [strikeQuantity, setStrikeQuantity] = useState(1);
+  const [strikeConfirmation, setStrikeConfirmation] = useState(false);
+  const [strikeSubmitting, setStrikeSubmitting] = useState(false);
   const espionageTarget = useMemo(() => queryEspionageTarget(searchParams), [searchParams]);
   const frigateHandoffTarget = useMemo(() => queryFrigateTarget(searchParams), [searchParams]);
   const [frigateTarget, setFrigateTarget] = useState<FrigateTargetInput>({ galaxy: '', system: '', position: '' });
@@ -119,6 +134,23 @@ export default function FleetPage() {
     error: strikeError,
     reload: reloadStrike,
   } = useApiData(loadStrike);
+  const loadStrikeCommand = useCallback(async (): Promise<FleetStrikeCommandResponse | null> => {
+    if (!originPlanetId || mode !== 'strike' || !espionageTarget) return null;
+    const query = new URLSearchParams({
+      originPlanetId,
+      galaxy: String(espionageTarget.galaxy),
+      system: String(espionageTarget.system),
+      slot: String(espionageTarget.slot),
+      corvettes: String(strikeQuantity),
+    });
+    return apiGet<FleetStrikeCommandResponse>(`/api/fleet/strikes/command?${query.toString()}`);
+  }, [originPlanetId, mode, espionageTarget, strikeQuantity]);
+  const {
+    data: strikeCommandData,
+    loading: strikeCommandLoading,
+    error: strikeCommandError,
+    reload: reloadStrikeCommand,
+  } = useApiData(loadStrikeCommand);
   const frigateCommandTarget = useMemo(() => {
     const galaxy = positiveInteger(frigateTarget.galaxy);
     const system = positiveInteger(frigateTarget.system);
@@ -166,9 +198,6 @@ export default function FleetPage() {
   const [transportSubmitting, setTransportSubmitting] = useState(false);
   const [espionageConfirmation, setEspionageConfirmation] = useState(false);
   const [espionageSubmitting, setEspionageSubmitting] = useState(false);
-  const [strikeQuantity, setStrikeQuantity] = useState(1);
-  const [strikeConfirmation, setStrikeConfirmation] = useState(false);
-  const [strikeSubmitting, setStrikeSubmitting] = useState(false);
   const [frigateConfirmation, setFrigateConfirmation] = useState(false);
   const [frigateSubmitting, setFrigateSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -192,6 +221,14 @@ export default function FleetPage() {
     && frigateCommandData.target.coordinates.system === frigateCommandTarget.system
     && frigateCommandData.target.coordinates.slot === frigateCommandTarget.position
     ? frigateCommandData
+    : null;
+  const currentStrikeCommand = strikeCommandData
+    && espionageTarget
+    && strikeCommandData.quantity === strikeQuantity
+    && strikeCommandData.target.coordinates.galaxy === espionageTarget.galaxy
+    && strikeCommandData.target.coordinates.system === espionageTarget.system
+    && strikeCommandData.target.coordinates.slot === espionageTarget.slot
+    ? strikeCommandData
     : null;
   const ships = data?.selectedOrigin.ships ?? [];
 
@@ -349,12 +386,14 @@ export default function FleetPage() {
     && (espionageData?.selectedOrigin.availableProbes ?? 0) >= 1
     && (espionageData?.selectedOrigin.espionageTechnologyLevel ?? 0) >= 1
     && !espionageSubmitting;
-  const maxStrikeQuantity = Math.min(100, strikeData?.selectedOrigin.availableCorvettes ?? 0);
+  const maxStrikeQuantity = currentStrikeCommand?.selectedOrigin.maximumQuantity
+    ?? Math.min(100, strikeData?.selectedOrigin.availableCorvettes ?? 0);
   const canReviewStrike = !activeStrike
     && espionageTarget !== null
     && Number.isSafeInteger(strikeQuantity)
     && strikeQuantity >= 1
     && strikeQuantity <= maxStrikeQuantity
+    && currentStrikeCommand?.eligibility.eligible === true
     && !strikeSubmitting;
   const maxFrigateQuantity = frigateData?.selectedOrigin.maximumQuantity ?? 0;
   const canReviewFrigate = !activeFrigateStrike
@@ -473,7 +512,7 @@ export default function FleetPage() {
     try {
       await apiPost('/api/fleet/strikes', { originPlanetId, target: espionageTarget, corvettes: strikeQuantity });
       setStrikeConfirmation(false);
-      await reloadStrike();
+      await Promise.all([reloadStrike(), reloadStrikeCommand()]);
       refreshCommand();
       setActionSuccess('Strike accepted. The server-confirmed strike state is now shown below.');
     } catch (failure) {
@@ -829,6 +868,16 @@ export default function FleetPage() {
           <h2 style={{ margin: 0 }}>Prepare Corvette strike</h2>
           <p style={{ margin: 0 }}>Selected target: <strong>{formatCoords(espionageTarget)}</strong></p>
           <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>The server validates target availability and protection, reserves your selected Corvettes, and calculates travel and Heliox. This strike has no loot; surviving Corvettes return automatically.</p>
+          {strikeCommandLoading ? <p role="status" style={{ margin: 0 }}>Checking the server-authoritative strike command…</p> : null}
+          {strikeCommandError ? <p className="alert alert-error" role="alert">{strikeCommandError}</p> : null}
+          {currentStrikeCommand ? <div className="panel stack" role="status" aria-live="polite">
+            <p style={{ margin: 0 }}>{corvetteEligibilityMessage(currentStrikeCommand.eligibility.code)}</p>
+            {currentStrikeCommand.estimate && currentStrikeCommand.affordability ? <dl className="research-details">
+              <div><dt>Server-confirmed travel time</dt><dd>{duration(currentStrikeCommand.estimate.durationSeconds)}</dd></div>
+              <div><dt>Server-confirmed round-trip Heliox</dt><dd>{formatNumber(currentStrikeCommand.estimate.fuelHeliox)}</dd></div>
+              <div><dt>Affordability</dt><dd>{currentStrikeCommand.affordability.affordable ? 'Available' : 'Insufficient Heliox'}</dd></div>
+            </dl> : null}
+          </div> : null}
           {strikeData.selectedOrigin.availableCorvettes < 1 ? <p className="alert alert-error" role="status">At least one available Corvette is required before launching a strike.</p> : null}
           <label htmlFor="strike-corvette-quantity">Corvettes to send
             <div className="button-row">

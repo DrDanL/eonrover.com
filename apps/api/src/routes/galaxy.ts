@@ -15,7 +15,7 @@ export type GalaxySlotReadModel =
     slot: number;
     occupancy: 'public';
     planet: { name: string; type: PlanetType };
-    owner: { username: string; protected: boolean };
+    owner: { username: string };
   };
 
 export interface GalaxySystemReadModel {
@@ -52,11 +52,10 @@ router.get('/:galaxy/:system', asyncHandler(async (req, res) => {
       slot: true,
       name: true,
       planetType: true,
-      owner: { select: { username: true, protectedUntil: true, status: true, emailVerifiedAt: true } },
+      owner: { select: { username: true, status: true, emailVerifiedAt: true } },
     },
     orderBy: { slot: 'asc' },
   });
-  const currentTime = new Date();
   const slots: GalaxySlotReadModel[] = Array.from({ length: GALAXY_COORDINATE_BOUNDS.slot.max }, (_, index) => {
     const slot = GALAXY_COORDINATE_BOUNDS.slot.min + index;
     const planet = planets.find((p) => p.slot === slot);
@@ -66,10 +65,7 @@ router.get('/:galaxy/:system', asyncHandler(async (req, res) => {
       slot,
       occupancy: 'public',
       planet: { name: planet.name, type: planet.planetType },
-      owner: {
-        username: planet.owner.username,
-        protected: planet.owner.protectedUntil ? planet.owner.protectedUntil > currentTime : false,
-      },
+      owner: { username: planet.owner.username },
     };
   });
   const response: GalaxySystemReadModel = { galaxy, system, slots };

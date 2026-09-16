@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
 import { scheduleFrigateStrikeArrivalWakeup } from './frigateStrikeArrivalSchedulingService';
+import { evaluateCombatTargetEligibility } from './combatTargetEligibility';
 
 const ATTEMPTS = 3;
 export type FrigateStrikeLaunchErrorCode = 'ORIGIN_NOT_OWNED' | 'INVALID_TARGET' | 'TARGET_UNAVAILABLE' | 'TARGET_PROTECTED' | 'INSUFFICIENT_FRIGATES' | 'INSUFFICIENT_HELIOX' | 'STRIKE_IN_PROGRESS' | 'STRIKE_UNAVAILABLE';
@@ -22,14 +23,19 @@ export async function launchCanonicalFrigateStrike(input: FrigateStrikeLaunchInp
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) try {
     const accepted = await prisma.$transaction(async (tx) => {
       const candidate = await tx.planet.findUnique({ where: { galaxy_system_slot: coordinates }, select: { id: true, ownerId: true } });
-      if (!candidate) throw new FrigateStrikeLaunchError('TARGET_UNAVAILABLE', 'The strike target is unavailable.');
+      if (!candidate) {
+        const requestedOrigin = await tx.planet.findUnique({ where: { id: input.originPlanetId }, select: { ownerId: true, galaxy: true } });
+        if (requestedOrigin?.ownerId === input.userId && requestedOrigin.galaxy !== coordinates.galaxy) throw new FrigateStrikeLaunchError('INVALID_TARGET', 'The strike target is invalid.');
+        throw new FrigateStrikeLaunchError('TARGET_UNAVAILABLE', 'The strike target is unavailable.');
+      }
       for (const id of [...new Set([input.userId, candidate.ownerId])].sort()) await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${id} FOR UPDATE`;
       const attacker = await tx.user.findUnique({ where: { id: input.userId }, select: { id: true, status: true, emailVerifiedAt: true } });
       if (!attacker || attacker.status !== 'ACTIVE' || !attacker.emailVerifiedAt) throw new FrigateStrikeLaunchError('ORIGIN_NOT_OWNED', 'The origin planet is not available to this account.');
       await tx.$queryRaw`SELECT "id" FROM "Planet" WHERE "id"=${input.originPlanetId} FOR UPDATE`; const origin = await tx.planet.findUnique({ where: { id: input.originPlanetId } });
       if (!origin || origin.ownerId !== attacker.id) throw new FrigateStrikeLaunchError('ORIGIN_NOT_OWNED', 'The origin planet is not available to this account.');
       await tx.$queryRaw`SELECT "id" FROM "Planet" WHERE "id"=${candidate.id} FOR UPDATE`; const destination = await tx.planet.findUnique({ where: { id: candidate.id }, include: { owner: { select: { id: true, status: true, emailVerifiedAt: true, protectedUntil: true } } } }); const departedAt = new Date();
-      if (!destination || destination.ownerId === attacker.id || destination.galaxy !== coordinates.galaxy || destination.system !== coordinates.system || destination.slot !== coordinates.slot || destination.owner.status !== 'ACTIVE' || !destination.owner.emailVerifiedAt) throw new FrigateStrikeLaunchError('TARGET_UNAVAILABLE', 'The strike target is unavailable.'); if (destination.owner.protectedUntil && destination.owner.protectedUntil > departedAt) throw new FrigateStrikeLaunchError('TARGET_PROTECTED', 'The strike target is protected.');
+      const eligibility = evaluateCombatTargetEligibility({ attacker, origin, requestedTarget: coordinates, target: destination, now: departedAt });
+      if (!destination || !eligibility.eligible) throw new FrigateStrikeLaunchError(eligibility.code === 'TARGET_PROTECTED' ? 'TARGET_PROTECTED' : eligibility.code === 'INVALID_TARGET' ? 'INVALID_TARGET' : 'TARGET_UNAVAILABLE', eligibility.code === 'TARGET_PROTECTED' ? 'The strike target is protected.' : 'The strike target is unavailable.');
       let plan: ReturnType<typeof planFrigateStrike>; try { plan = planFrigateStrike({ origin: { galaxy: origin.galaxy, system: origin.system, slot: origin.slot }, target: coordinates, quantity: input.quantity, fleetSpeed: config.fleetSpeed }); } catch { throw new FrigateStrikeLaunchError('INVALID_TARGET', 'The strike target or Frigate quantity is invalid.'); }
       const synced = await syncLockedPlanetResources(tx, origin, departedAt, config.economySpeed); await tx.$queryRaw`SELECT "id" FROM "Ship" WHERE "planetId"=${origin.id} AND "key"='frigate' FOR UPDATE`; const frigates = await tx.ship.findUnique({ where: { planetId_key: { planetId: origin.id, key: 'frigate' } }, select: { count: true } });
       await tx.$queryRaw`SELECT "id" FROM "FleetMission" WHERE "missionType"='ATTACK' AND "frigateStrikeOriginPlanetId"=${origin.id} AND "frigateStrikeTargetPlanetId" IS NOT NULL AND "frigateStrikeAttackerId" IS NOT NULL AND "frigateStrikeDefenderId" IS NOT NULL AND "frigateStrikePhase" IN ('OUTBOUND','RETURNING') FOR UPDATE`;

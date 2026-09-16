@@ -160,6 +160,27 @@ describe('player-safe Frigate strike command API', () => {
     } finally { await removeJobs(mission.id); }
   });
 
+  it('rechecks the same safe eligibility policy inside launch after command state changes', async () => {
+    const data = await strikeFixture();
+    const before = {
+      heliox: (await prisma.planet.findUniqueOrThrow({ where: { id: data.origin.id } })).heliox,
+      frigates: (await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: data.origin.id, key: 'frigate' } } })).count,
+      missions: await prisma.fleetMission.count(), notifications: await prisma.notification.count(),
+    };
+    expect((await request(app).get(commandPath(data)).set('Cookie', data.attacker.cookie).expect(200)).body.eligibility)
+      .toEqual({ eligible: true, code: 'ELIGIBLE' });
+    await prisma.user.update({ where: { id: data.defender.user.id }, data: { protectedUntil: new Date(Date.now() + 60_000) } });
+    expect((await request(app).get(commandPath(data)).set('Cookie', data.attacker.cookie).expect(200)).body.eligibility)
+      .toEqual({ eligible: false, code: 'TARGET_PROTECTED' });
+    await request(app).post('/api/fleet/frigate-strikes').set('Cookie', data.attacker.cookie).set('X-Eonrover-Client', '1').send(body(data)).expect(409);
+    const after = {
+      heliox: (await prisma.planet.findUniqueOrThrow({ where: { id: data.origin.id } })).heliox,
+      frigates: (await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: data.origin.id, key: 'frigate' } } })).count,
+      missions: await prisma.fleetMission.count(), notifications: await prisma.notification.count(),
+    };
+    expect(after).toEqual(before);
+  });
+
   it('has one concurrent launch winner and settles a due active state exactly once', async () => {
     const data = await strikeFixture({ frigates: 4 });
     const responses = await Promise.all([

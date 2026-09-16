@@ -469,6 +469,30 @@ export interface FleetStrikesResponse {
   } | null;
 }
 
+export type CorvetteStrikeEligibilityCode =
+  | 'ELIGIBLE'
+  | 'INVALID_TARGET'
+  | 'TARGET_UNAVAILABLE'
+  | 'TARGET_PROTECTED'
+  | 'STRIKE_IN_PROGRESS'
+  | 'INSUFFICIENT_CORVETTES'
+  | 'INSUFFICIENT_HELIOX';
+
+export interface FleetStrikeCommandResponse {
+  selectedOrigin: {
+    coordinates: { galaxy: number; system: number; slot: number };
+    heliox: number;
+    availableCorvettes: number;
+    maximumQuantity: number;
+  };
+  activeStrike: FleetStrikesResponse['activeStrike'];
+  target: { coordinates: { galaxy: number; system: number; slot: number } };
+  quantity: number;
+  eligibility: { eligible: boolean; code: CorvetteStrikeEligibilityCode };
+  estimate: { durationSeconds: number; fuelHeliox: number } | null;
+  affordability: { requiredHeliox: number; affordable: boolean } | null;
+}
+
 export type FrigateStrikeEligibilityCode =
   | 'ELIGIBLE'
   | 'INVALID_TARGET'
@@ -511,7 +535,7 @@ export type GalaxySlot =
     slot: number;
     occupancy: 'public';
     planet: { name: string; type: string };
-    owner: { username: string; protected: boolean };
+    owner: { username: string };
   };
 
 export interface GalaxySystemResponse {

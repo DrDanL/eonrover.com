@@ -10,6 +10,7 @@ import { prisma } from '../lib/prisma';
 import { getUniverseConfig } from './gameConfig';
 import { syncLockedPlanetResources } from './planetService';
 import { scheduleCorvetteStrikeArrivalWakeup } from './corvetteStrikeArrivalSchedulingService';
+import { evaluateCombatTargetEligibility } from './combatTargetEligibility';
 
 const ATTEMPTS = 3;
 export type CorvetteStrikeLaunchErrorCode = 'ORIGIN_NOT_OWNED' | 'INVALID_TARGET' | 'TARGET_UNAVAILABLE' | 'TARGET_PROTECTED' | 'INSUFFICIENT_CORVETTES' | 'INSUFFICIENT_HELIOX' | 'STRIKE_IN_PROGRESS' | 'STRIKE_UNAVAILABLE';
@@ -47,7 +48,11 @@ export async function launchCanonicalCorvetteStrike(input: CorvetteStrikeLaunchI
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) try {
     const acceptedLaunch = await prisma.$transaction(async (tx) => {
       const candidate = await tx.planet.findUnique({ where: { galaxy_system_slot: target }, select: { id: true, ownerId: true } });
-      if (!candidate) failure('TARGET_UNAVAILABLE', 'The strike target is unavailable.');
+      if (!candidate) {
+        const requestedOrigin = await tx.planet.findUnique({ where: { id: input.originPlanetId }, select: { ownerId: true, galaxy: true } });
+        if (requestedOrigin?.ownerId === input.userId && requestedOrigin.galaxy !== target.galaxy) failure('INVALID_TARGET', 'The strike target is invalid.');
+        failure('TARGET_UNAVAILABLE', 'The strike target is unavailable.');
+      }
       for (const id of [...new Set([input.userId, candidate.ownerId])].sort()) await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${id} FOR UPDATE`;
       const attacker = await tx.user.findUnique({ where: { id: input.userId }, select: { id: true, status: true, emailVerifiedAt: true } });
       if (!attacker || attacker.status !== 'ACTIVE' || !attacker.emailVerifiedAt) failure('ORIGIN_NOT_OWNED', 'The origin planet is not available to this account.');
@@ -57,8 +62,8 @@ export async function launchCanonicalCorvetteStrike(input: CorvetteStrikeLaunchI
       await tx.$queryRaw`SELECT "id" FROM "Planet" WHERE "id"=${candidate.id} FOR UPDATE`;
       const destination = await tx.planet.findUnique({ where: { id: candidate.id }, include: { owner: { select: { id: true, status: true, emailVerifiedAt: true, protectedUntil: true } } } });
       const departedAt = new Date();
-      if (!destination || destination.ownerId === attacker.id || destination.ownerId !== candidate.ownerId || destination.galaxy !== target.galaxy || destination.system !== target.system || destination.slot !== target.slot || destination.owner.status !== 'ACTIVE' || !destination.owner.emailVerifiedAt) failure('TARGET_UNAVAILABLE', 'The strike target is unavailable.');
-      if (destination.owner.protectedUntil && destination.owner.protectedUntil > departedAt) failure('TARGET_PROTECTED', 'The strike target is protected.');
+      const eligibility = evaluateCombatTargetEligibility({ attacker, origin, requestedTarget: target, target: destination, now: departedAt });
+      if (!destination || !eligibility.eligible) failure(eligibility.code === 'TARGET_PROTECTED' ? 'TARGET_PROTECTED' : eligibility.code === 'INVALID_TARGET' ? 'INVALID_TARGET' : 'TARGET_UNAVAILABLE', eligibility.code === 'TARGET_PROTECTED' ? 'The strike target is protected.' : 'The strike target is unavailable.');
       const accepted = plan({ galaxy: origin.galaxy, system: origin.system, slot: origin.slot }, target, input.quantity, config.fleetSpeed);
       const synced = await syncLockedPlanetResources(tx, origin, departedAt, config.economySpeed);
       await tx.$queryRaw`SELECT "id" FROM "Ship" WHERE "planetId"=${origin.id} AND "key"='corvette' FOR UPDATE`;

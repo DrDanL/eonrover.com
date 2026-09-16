@@ -38,6 +38,7 @@ describe('canonical Frigate strike lifecycle', () => {
   it('settles decisive forces once, persists arrival-time reports, returns only survivors, and leaves a shield as a stalemate', async () => {
     const decisive = await fixture({ defence: 'flakTurret', defenceCount: 1 }); const accepted = await launchCanonicalFrigateStrike(input(decisive)); jobIds.add(frigateStrikeArrivalJobId(accepted.missionId));
     const due = new Date((await prisma.fleetMission.findUniqueOrThrow({ where: { id: accepted.missionId } })).arrivesAt.getTime() + 1);
+    await prisma.user.update({ where: { id: decisive.defender.id }, data: { protectedUntil: new Date(due.getTime() + 60_000) } });
     expect(await settleCanonicalFrigateStrike(accepted.missionId, due)).toBe('arrived'); const returnId = frigateStrikeReturnJobId(accepted.missionId); jobIds.add(returnId);
     await Promise.all([settleCanonicalFrigateStrike(accepted.missionId, due), settleCanonicalFrigateStrike(accepted.missionId, due)]);
     const report = await prisma.frigateStrikeReport.findUniqueOrThrow({ where: { missionId: accepted.missionId } }); const snapshot = report.resultSnapshot as any;

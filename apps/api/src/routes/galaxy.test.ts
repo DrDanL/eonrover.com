@@ -110,7 +110,7 @@ describe('bounded privacy-safe Galaxy read model', () => {
           slot: 2,
           occupancy: 'public',
           planet: { name: 'Public Horizon', type: 'OCEANIC' },
-          owner: { username: publicOwner.user.username, protected: true },
+          owner: { username: publicOwner.user.username },
         },
         { slot: 5, occupancy: 'unavailable' },
         { slot: 9, occupancy: 'unavailable' },
@@ -155,10 +155,10 @@ describe('bounded privacy-safe Galaxy read model', () => {
       slot: 3,
       occupancy: 'public',
       planet: { name: 'Allowlisted World', type: 'TEMPERATE' },
-      owner: { username: owner.user.username, protected: false },
+      owner: { username: owner.user.username },
     });
     const serialized = JSON.stringify(response.body);
-    for (const sensitiveValue of [planet.id, owner.user.id, viewer.user.id, owner.user.email, '9876', 'researchLab', 'probe', 'ESPIONAGE', 'PRIVATE', 'lastProductionAt']) {
+    for (const sensitiveValue of [planet.id, owner.user.id, viewer.user.id, owner.user.email, '9876', 'researchLab', 'probe', 'ESPIONAGE', 'PRIVATE', 'lastProductionAt', 'protectedUntil']) {
       expect(serialized).not.toContain(sensitiveValue);
     }
 

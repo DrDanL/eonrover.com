@@ -25,8 +25,8 @@ describe('launchCanonicalCorvetteStrike', () => {
   });
   it('rejects protected, unavailable, self and cross-galaxy targets without reservations', async () => {
     const protectedTarget = await fixture({ protected: true }); await expectError(launchCanonicalCorvetteStrike(input(protectedTarget)), 'TARGET_PROTECTED');
-    const self = await fixture(); await expectError(launchCanonicalCorvetteStrike(input(self, { target: { galaxy: 1, system: self.origin.system, slot: self.origin.slot } })), 'TARGET_UNAVAILABLE');
-    const cross = await fixture(); await expectError(launchCanonicalCorvetteStrike(input(cross, { target: { galaxy: 2, system: cross.target.system, slot: cross.target.slot } })), 'TARGET_UNAVAILABLE');
+    const self = await fixture(); await expectError(launchCanonicalCorvetteStrike(input(self, { target: { galaxy: 1, system: self.origin.system, slot: self.origin.slot } })), 'INVALID_TARGET');
+    const cross = await fixture(); await expectError(launchCanonicalCorvetteStrike(input(cross, { target: { galaxy: 2, system: cross.target.system, slot: cross.target.slot } })), 'INVALID_TARGET');
     const invalid = await fixture(); await expectError(launchCanonicalCorvetteStrike(input(invalid, { target: { galaxy: 0, system: invalid.target.system, slot: invalid.target.slot } })), 'INVALID_TARGET');
     expect(await prisma.fleetMission.count()).toBe(0); expect((await prisma.ship.findUniqueOrThrow({ where: { planetId_key: { planetId: protectedTarget.origin.id, key: 'corvette' } } })).count).toBe(3);
   });
