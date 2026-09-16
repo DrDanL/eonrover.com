@@ -12,6 +12,9 @@ import {
   EspionageProbeReportDetail,
   EspionageProbeReportListItem,
   EspionageProbeReportsResponse,
+  FrigateStrikeReportDetail,
+  FrigateStrikeReportListItem,
+  FrigateStrikeReportsResponse,
 } from '@/lib/web-types';
 
 function reportAccessError(error: unknown, missing = false): Error {
@@ -176,11 +179,96 @@ function CombatReportDetail({ report, onReturn }: { report: CorvetteStrikeReport
   </div>;
 }
 
+function frigateReportAccessError(error: unknown, missing = false): Error {
+  if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+    return new Error('You do not have permission to view Frigate Strike Results.');
+  }
+  if (missing && error instanceof ApiError && error.status === 404) {
+    return new Error('This Frigate strike result is not available.');
+  }
+  return error instanceof Error ? error : new Error(getErrorMessage(error));
+}
+
+function frigateOutcomeSummary(outcome: FrigateStrikeReportListItem['outcome']): string {
+  switch (outcome) {
+    case 'attacker': return 'Attacker victory recorded in the immutable result.';
+    case 'defender': return 'Defender victory recorded in the immutable result.';
+    case 'draw': return 'No decisive winner was recorded in the immutable result.';
+    case 'unresolved': return 'The immutable result recorded no final winner.';
+  }
+}
+
+function FrigateCombatReportListItem({ report, selected, onSelect }: {
+  report: FrigateStrikeReportListItem;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return <article className="panel stack">
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+      <strong>Frigate Strike · {formatCoords(report.target)}</strong>
+      <span className="tag">{enumLabel(report.outcome)}</span>
+    </div>
+    <p style={{ margin: 0 }}>{report.target.planet.name} · {enumLabel(report.target.planet.type)}</p>
+    <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Frigates: {formatNumber(report.attacker.startingFrigates)} sent, {formatNumber(report.attacker.lostFrigates)} lost, {formatNumber(report.attacker.survivingFrigates)} surviving. Defender units: {formatNumber(report.defender.survivingUnits)} surviving.</p>
+    <p style={{ margin: 0 }} role="status">{frigateOutcomeSummary(report.outcome)}</p>
+    <span style={{ color: 'var(--color-text-muted)' }}>Completed {formatDateTime(report.createdAt)}</span>
+    <div><button type="button" className="btn" aria-pressed={selected} onClick={() => onSelect(report.id)}>View Frigate result</button></div>
+  </article>;
+}
+
+function FrigateCombatReportDetail({ report, onReturn }: { report: FrigateStrikeReportDetail; onReturn: () => void }) {
+  return <div className="stack" aria-live="polite" aria-label="Selected Frigate Strike result">
+    <div className="panel stack">
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div className="stack" style={{ gap: '0.25rem' }}>
+          <h2 style={{ margin: 0 }}>Frigate Strike Result</h2>
+          <span style={{ color: 'var(--color-text-muted)' }}>Completed {formatDateTime(report.createdAt)} · {enumLabel(report.outcome)}</span>
+        </div>
+        <div><button type="button" onClick={onReturn}>Back to Frigate results</button></div>
+      </div>
+      <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>This is an immutable battle snapshot captured at strike arrival. It does not reflect live target state, cargo, loot, debris, repairs, or later combat changes.</p>
+      <p style={{ margin: 0 }} role="status">{frigateOutcomeSummary(report.outcome)}</p>
+    </div>
+    <section className="panel stack">
+      <h3 style={{ margin: 0 }}>Target</h3>
+      <dl className="research-details">
+        <div><dt>Coordinates</dt><dd>{formatCoords(report.target)}</dd></div>
+        <div><dt>Planet</dt><dd>{report.target.planet.name}</dd></div>
+        <div><dt>Type</dt><dd>{enumLabel(report.target.planet.type)}</dd></div>
+      </dl>
+    </section>
+    <section className="panel stack">
+      <h3 style={{ margin: 0 }}>Attacker Frigates</h3>
+      <dl className="research-details">
+        <div><dt>Starting</dt><dd>{formatNumber(report.attacker.startingFrigates)}</dd></div>
+        <div><dt>Lost</dt><dd>{formatNumber(report.attacker.lostFrigates)}</dd></div>
+        <div><dt>Surviving</dt><dd>{formatNumber(report.attacker.survivingFrigates)}</dd></div>
+      </dl>
+    </section>
+    <section className="stack" aria-label="Immutable defender forces">
+      <h3 style={{ margin: 0 }}>Defender forces</h3>
+      <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Starting, lost, and surviving forces are captured separately so no colour-only comparison is required.</p>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div className="stack"><CombatQuantitySection title="Combat ships at start" quantities={report.defender.ships.starting} /><CombatQuantitySection title="Combat ships lost" quantities={report.defender.ships.lost} /><CombatQuantitySection title="Combat ships surviving" quantities={report.defender.ships.surviving} /></div>
+        <div className="stack"><CombatQuantitySection title="Defences at start" quantities={report.defender.defences.starting} /><CombatQuantitySection title="Defences lost" quantities={report.defender.defences.lost} /><CombatQuantitySection title="Defences surviving" quantities={report.defender.defences.surviving} /></div>
+      </div>
+    </section>
+    <section className="panel stack">
+      <h3 style={{ margin: 0 }}>Rounds</h3>
+      {report.rounds.length === 0 ? <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>No combat rounds were recorded. A draw result does not disclose hidden combat mechanics.</p> : <ol className="stack" style={{ margin: 0, paddingInlineStart: '1.5rem' }}>
+        {report.rounds.map((round) => <li key={round.round}>Round {round.round}: attacker lost {formatNumber(round.attackerLostFrigates)} Frigate{round.attackerLostFrigates === 1 ? '' : 's'}; defender lost {formatNumber(round.defenderLostUnits)} unit{round.defenderLostUnits === 1 ? '' : 's'}.</li>)}
+      </ol>}
+    </section>
+  </div>;
+}
+
 export default function ReportsPage() {
   const [page, setPage] = useState(1);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [combatPage, setCombatPage] = useState(1);
   const [selectedCombatReportId, setSelectedCombatReportId] = useState<string | null>(null);
+  const [frigatePage, setFrigatePage] = useState(1);
+  const [selectedFrigateReportId, setSelectedFrigateReportId] = useState<string | null>(null);
   const loadReports = useCallback(async () => {
     try {
       return await apiGet<EspionageProbeReportsResponse>(`/api/espionage/reports?page=${page}`);
@@ -227,11 +315,38 @@ export default function ReportsPage() {
     loading: selectedCombatLoading,
     error: selectedCombatError,
   } = useApiData(loadSelectedCombatReport);
+  const loadFrigateReports = useCallback(async () => {
+    try {
+      return await apiGet<FrigateStrikeReportsResponse>(`/api/combat/frigate-strikes/reports?page=${frigatePage}`);
+    } catch (error) {
+      throw frigateReportAccessError(error);
+    }
+  }, [frigatePage]);
+  const loadSelectedFrigateReport = useCallback(async (): Promise<FrigateStrikeReportDetail | null> => {
+    if (!selectedFrigateReportId) return null;
+    try {
+      return await apiGet<FrigateStrikeReportDetail>(`/api/combat/frigate-strikes/reports/${encodeURIComponent(selectedFrigateReportId)}`);
+    } catch (error) {
+      throw frigateReportAccessError(error, true);
+    }
+  }, [selectedFrigateReportId]);
+  const {
+    data: frigateData,
+    loading: frigateLoading,
+    error: frigateError,
+  } = useApiData(loadFrigateReports);
+  const {
+    data: selectedFrigateReport,
+    loading: selectedFrigateLoading,
+    error: selectedFrigateError,
+  } = useApiData(loadSelectedFrigateReport);
   const isPermissionError = error === 'You do not have permission to view Probe Intelligence reports.';
   const canPrevious = (data?.page ?? 1) > 1;
   const canNext = data ? data.page * data.pageSize < data.total : false;
   const canCombatPrevious = (combatData?.page ?? 1) > 1;
   const canCombatNext = combatData ? combatData.page * combatData.pageSize < combatData.total : false;
+  const canFrigatePrevious = (frigateData?.page ?? 1) > 1;
+  const canFrigateNext = frigateData ? frigateData.page * frigateData.pageSize < frigateData.total : false;
 
   function changePage(nextPage: number) {
     setSelectedReportId(null);
@@ -241,6 +356,11 @@ export default function ReportsPage() {
   function changeCombatPage(nextPage: number) {
     setSelectedCombatReportId(null);
     setCombatPage(nextPage);
+  }
+
+  function changeFrigatePage(nextPage: number) {
+    setSelectedFrigateReportId(null);
+    setFrigatePage(nextPage);
   }
 
   return (
@@ -292,6 +412,30 @@ export default function ReportsPage() {
           <div className="button-row">
             <button type="button" onClick={() => changeCombatPage(combatData.page - 1)} disabled={!canCombatPrevious}>Previous</button>
             <button type="button" onClick={() => changeCombatPage(combatData.page + 1)} disabled={!canCombatNext}>Next</button>
+          </div>
+        </div>
+      </div> : null}
+      <div className="panel stack">
+        <h2 style={{ margin: 0 }}>Frigate Strike Results</h2>
+        <p style={{ margin: 0, color: 'var(--color-text-muted)' }}>Review immutable no-loot Frigate strike snapshots. These results never update with live target data or reveal combat internals.</p>
+      </div>
+      {frigateLoading ? <StatusPanel message="Loading Frigate Strike Results..." /> : null}
+      {frigateError ? <StatusPanel tone="error" title={frigateError === 'You do not have permission to view Frigate Strike Results.' ? 'Report access denied' : 'Unable to load Frigate strike results'} message={frigateError} /> : null}
+      {!frigateLoading && !frigateError && frigateData && selectedFrigateReportId ? (
+        selectedFrigateLoading ? <div className="stack"><StatusPanel message="Loading selected Frigate strike result..." /><div><button type="button" onClick={() => setSelectedFrigateReportId(null)}>Back to Frigate results</button></div></div>
+          : selectedFrigateError ? <div className="stack"><StatusPanel tone="error" title="Frigate strike result unavailable" message={selectedFrigateError} /><div><button type="button" onClick={() => setSelectedFrigateReportId(null)}>Back to Frigate results</button></div></div>
+            : selectedFrigateReport ? <FrigateCombatReportDetail report={selectedFrigateReport} onReturn={() => setSelectedFrigateReportId(null)} />
+              : <StatusPanel message="No Frigate strike result was selected." />
+      ) : null}
+      {!frigateLoading && !frigateError && frigateData && !selectedFrigateReportId ? <div className="stack">
+        {frigateData.reports.length === 0 ? <StatusPanel title="No Frigate Strike Results" message="Launch a Frigate strike from Fleet to capture your first immutable combat snapshot." /> : frigateData.reports.map((report) => (
+          <FrigateCombatReportListItem key={report.id} report={report} selected={false} onSelect={setSelectedFrigateReportId} />
+        ))}
+        <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ color: 'var(--color-text-muted)' }}>Page {frigateData.page} · {formatNumber(frigateData.total)} results</span>
+          <div className="button-row">
+            <button type="button" onClick={() => changeFrigatePage(frigateData.page - 1)} disabled={!canFrigatePrevious}>Previous</button>
+            <button type="button" onClick={() => changeFrigatePage(frigateData.page + 1)} disabled={!canFrigateNext}>Next</button>
           </div>
         </div>
       </div> : null}

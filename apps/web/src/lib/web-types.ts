@@ -744,6 +744,42 @@ export interface CorvetteStrikeReportDetail {
   rounds: Array<{ round: number; attackerLostCorvettes: number; defenderLostUnits: number }>;
 }
 
+export type FrigateStrikeOutcome = 'attacker' | 'defender' | 'draw' | 'unresolved';
+
+export interface FrigateStrikeReportListItem {
+  id: string;
+  createdAt: string;
+  target: {
+    galaxy: number;
+    system: number;
+    slot: number;
+    planet: { name: string; type: string };
+  };
+  outcome: FrigateStrikeOutcome;
+  attacker: { startingFrigates: number; lostFrigates: number; survivingFrigates: number };
+  defender: { startingUnits: number; lostUnits: number; survivingUnits: number };
+}
+
+export interface FrigateStrikeReportsResponse {
+  reports: FrigateStrikeReportListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface FrigateStrikeReportDetail {
+  id: string;
+  createdAt: string;
+  target: FrigateStrikeReportListItem['target'];
+  outcome: FrigateStrikeOutcome;
+  attacker: FrigateStrikeReportListItem['attacker'];
+  defender: {
+    ships: { starting: Record<string, number>; lost: Record<string, number>; surviving: Record<string, number> };
+    defences: { starting: Record<string, number>; lost: Record<string, number>; surviving: Record<string, number> };
+  };
+  rounds: Array<{ round: number; attackerLostFrigates: number; defenderLostUnits: number }>;
+}
+
 export interface GateFragment {
   id: string;
   ownerId: string;
