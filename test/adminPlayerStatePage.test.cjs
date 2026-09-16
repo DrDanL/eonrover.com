@@ -38,13 +38,15 @@ test('the portal is ADMIN-only and has a server-rendered local-first runtime pol
   assert.match(gameShell, /user\.role === 'ADMIN'/);
 });
 
-test('the retained API router has no database, Redis, queue, or player-state dependency', () => {
+test('the retained API router has only allowlisted read projections and no operational dependencies', () => {
   const route = readFileSync(path.join(__dirname, '../apps/api/src/routes/admin.ts'), 'utf8');
 
-  assert.match(route, /requireReadOnlyAuth, requireRole\('ADMIN'\), requireAdminPortalRuntime/);
+  assert.match(route, /requireAdminPortalRuntime, requireReadOnlyAuth, requireRole\('ADMIN'\)/);
   assert.match(route, /router\.get\('\/status'/);
-  assert.doesNotMatch(route, /from ['"][^'"]*(?:lib\/prisma|lib\/redis|adminPlayerStateService)['"]/i);
-  assert.doesNotMatch(route, /syncPlanetResources|logAudit/);
+  assert.match(route, /router\.get\('\/overview'/);
+  assert.match(route, /router\.get\('\/players'/);
+  assert.doesNotMatch(route, /lib\/redis|adminPlayerStateService|syncPlanetResources|logAudit|buildQueue|fleetQueue/i);
+  assert.doesNotMatch(route, /router\.use\(\(_req, res\)/);
   assert.doesNotMatch(route, /MODERATOR/);
 });
 
