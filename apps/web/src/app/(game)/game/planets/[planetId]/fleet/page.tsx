@@ -3,6 +3,7 @@
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { GALAXY_COORDINATE_BOUNDS } from '@eonrover/shared';
 import StatusPanel from '@/components/StatusPanel';
 import { apiGet, apiPost } from '@/lib/api';
 import { enumLabel, formatCoords, formatDateTime, formatNumber, formatRelativeCountdown } from '@/lib/formatters';
@@ -42,6 +43,15 @@ function queryEspionageTarget(searchParams: URLSearchParams): EspionageTarget | 
   return galaxy !== null && system !== null && slot !== null ? { galaxy, system, slot } : null;
 }
 
+function queryFrigateTarget(searchParams: URLSearchParams): FrigateTargetInput | null {
+  const galaxy = queryCoordinate(searchParams.get('targetGalaxy'), GALAXY_COORDINATE_BOUNDS.galaxy.max);
+  const system = queryCoordinate(searchParams.get('targetSystem'), GALAXY_COORDINATE_BOUNDS.system.max);
+  const position = queryCoordinate(searchParams.get('targetPosition'), GALAXY_COORDINATE_BOUNDS.slot.max);
+  return galaxy !== null && system !== null && position !== null
+    ? { galaxy: String(galaxy), system: String(system), position: String(position) }
+    : null;
+}
+
 function frigateEligibilityMessage(code: FleetFrigateStrikeCommandResponse['eligibility']['code']): string {
   switch (code) {
     case 'ELIGIBLE': return 'This command is currently eligible. The server checks the target again when it launches.';
@@ -61,6 +71,7 @@ export default function FleetPage() {
   const now = useTicker();
   const [mode, setMode] = useState<FleetMode>('deploy');
   const espionageTarget = useMemo(() => queryEspionageTarget(searchParams), [searchParams]);
+  const frigateHandoffTarget = useMemo(() => queryFrigateTarget(searchParams), [searchParams]);
   const [frigateTarget, setFrigateTarget] = useState<FrigateTargetInput>({ galaxy: '', system: '', position: '' });
   const [frigateQuantity, setFrigateQuantity] = useState(1);
   const load = useCallback(async (): Promise<FleetDeploymentsResponse | null> => {
@@ -213,7 +224,12 @@ export default function FleetPage() {
   useEffect(() => {
     if (searchParams.get('mode') === 'espionage') setMode('espionage');
     if (searchParams.get('mode') === 'strike') setMode('strike');
-  }, [searchParams]);
+    if (searchParams.get('mode') === 'frigate-strike') {
+      setMode('frigate');
+      setFrigateTarget(frigateHandoffTarget ?? { galaxy: '', system: '', position: '' });
+      setFrigateConfirmation(false);
+    }
+  }, [frigateHandoffTarget, searchParams]);
 
   useEffect(() => {
     if (!data || speed === null || data.supportedSpeedOptions.includes(speed)) return;

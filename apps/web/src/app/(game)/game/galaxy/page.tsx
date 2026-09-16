@@ -61,7 +61,10 @@ export default function GalaxyPage() {
                     <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=espionage&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Send Probe to ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Send Probe</Link>
                     {slot.owner.protected ? <span className="tag">Strike unavailable: protected</span>
                       : selectedOriginGalaxy !== galaxy ? <span className="tag">Strike unavailable: same galaxy required</span>
-                        : <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=strike&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Launch Strike at ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Launch Strike</Link>}
+                        : <>
+                          <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=strike&targetGalaxy=${galaxy}&targetSystem=${system}&targetSlot=${slot.slot}`} aria-label={`Launch Strike at ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Launch Strike</Link>
+                          <Link className="btn" href={`/game/planets/${encodeURIComponent(summary.selectedPlanetId)}/fleet?mode=frigate-strike&targetGalaxy=${galaxy}&targetSystem=${system}&targetPosition=${slot.slot}`} aria-label={`Prepare Frigate Strike at ${slot.planet.name} at ${galaxy}:${system}:${slot.slot}`}>Prepare Frigate Strike</Link>
+                        </>}
                   </div> : slot.occupancy === 'public' ? <span className="tag">Select an origin planet first</span> : '—'}</td>
                 </tr>
               ))}
