@@ -31,6 +31,7 @@ export default function GameNavigation({ planetId, showAdminLink, label }: GameN
   ];
   const secondary: NavigationItem[] = [
     { label: 'Eon Gates', href: '/game/gates' },
+    { label: 'Mission Control', href: '/game/operations' },
     { label: 'Reports', href: '/game/reports' },
     { label: 'Leaderboard', href: '/game/leaderboard' },
     { label: 'Notifications', href: '/game/notifications' },

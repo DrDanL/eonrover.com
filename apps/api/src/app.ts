@@ -26,6 +26,7 @@ import reportRoutes from './routes/reports';
 import espionageReportRoutes from './routes/espionageReports';
 import corvetteStrikeReportRoutes from './routes/corvetteStrikeReports';
 import frigateStrikeReportRoutes from './routes/frigateStrikeReports';
+import operationsRoutes from './routes/operations';
 import {
   apiErrorHandler,
   apiNotFoundHandler,
@@ -79,6 +80,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.use('/api/planets/:planetId/shipyard', shipyardRoutes);
   app.use('/api/research', researchRoutes);
   app.use('/api/fleet', fleetRoutes);
+  app.use('/api/operations', operationsRoutes);
   app.use('/api/gates', gateRoutes);
   app.use('/api/galaxy', galaxyRoutes);
   app.use('/api/messages', messageRoutes);

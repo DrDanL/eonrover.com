@@ -329,6 +329,25 @@ export interface FleetMission {
   resultSummary?: unknown;
 }
 
+export type MissionControlMissionType = 'DEPLOY' | 'COLONIZATION' | 'TRANSPORT' | 'ESPIONAGE_PROBE' | 'CORVETTE_STRIKE' | 'FRIGATE_STRIKE';
+export type MissionControlPhase = 'OUTBOUND' | 'RETURNING' | 'AWAITING_DESTINATION_CAPACITY';
+
+export interface MissionControlOperation {
+  missionType: MissionControlMissionType;
+  phase: MissionControlPhase;
+  direction: 'OUTBOUND' | 'RETURNING';
+  origin: { name: string; coordinates: { galaxy: number; system: number; slot: number } };
+  destination: { galaxy: number; system: number; slot: number };
+  manifest: Record<string, number>;
+  cargo: ResourceAmounts | null;
+  departedAt: string;
+  nextEventAt: string | null;
+}
+
+export interface MissionControlResponse {
+  operations: MissionControlOperation[];
+}
+
 export interface FleetDeploymentsResponse {
   selectedOrigin: {
     id: string;

@@ -22,6 +22,7 @@ export default function PlanetSidebar({ showAdminLink }: { showAdminLink: boolea
         { href: '/game/alliances', label: 'Alliances' },
         { href: '/game/leaderboard', label: 'Leaderboard' },
         { href: '/game/notifications', label: 'Notifications' },
+        { href: '/game/operations', label: 'Mission Control' },
         { href: '/game/settings', label: 'Settings' },
         { href: '/game/reports', label: 'Reports' },
         ...(showAdminLink ? [{ href: '/admin', label: 'Admin' }] : []),
